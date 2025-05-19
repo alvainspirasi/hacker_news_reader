@@ -1430,46 +1430,9 @@ impl eframe::App for HackerNewsReaderApp {
                         ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
                     }
                     
-                    let force_refresh = ctx.input(|i| i.modifiers.shift);
+                    // Always force refresh (bypass cache) when refresh button is clicked
                     if refresh_btn.clicked() && !self.loading {
-                        if force_refresh {
-                            // Force refresh (bypass cache)
-                            let client = self.hn_client.clone();
-                            self.loading = true;
-                            let (tx, rx) = std::sync::mpsc::channel();
-                            
-                            // Convert the tab enum to a string
-                            let tab_str = match self.current_tab {
-                                Tab::Hot => "hot",
-                                Tab::New => "new",
-                                Tab::Show => "show",
-                                Tab::Ask => "ask",
-                                Tab::Jobs => "jobs",
-                                Tab::Best => "best",
-                            };
-                            
-                            let handle = thread::spawn(move || {
-                                let result: Box<dyn std::any::Any + Send> = match client.fetch_fresh_stories_by_tab(tab_str) {
-                                    Ok(stories) => {
-                                        let _ = tx.send(Some(stories));
-                                        Box::new(())
-                                    }
-                                    Err(_) => {
-                                        let _ = tx.send(None::<Vec<HackerNewsItem>>);
-                                        Box::new(())
-                                    }
-                                };
-                                result
-                            });
-                            
-                            self.load_thread = Some(handle);
-                            
-                            // Store the receiver for later checks
-                            self.stories_receiver = Some(rx);
-                        } else {
-                            // Normal refresh (uses cache if valid)
-                            self.load_stories();
-                        }
+                        self.refresh_current_view(true); // Force refresh (bypass cache)
                     }
                     
                     // Show tooltip for refresh with maximum stability
@@ -1500,10 +1463,9 @@ impl eframe::App for HackerNewsReaderApp {
                                 // Use fixed size labels to prevent layout shifts
                                 ui.set_max_width(140.0);
                                 ui.vertical_centered(|ui| {
-                                    let text = if force_refresh { "Force Refresh" } else { "Refresh" };
-                                    ui.add(egui::Label::new(RichText::new(text).size(14.0)));
+                                    ui.add(egui::Label::new(RichText::new("Refresh").size(14.0)));
                                     ui.add(egui::Label::new(
-                                        RichText::new("Hold Shift to bypass cache")
+                                        RichText::new("Ctrl+R to refresh")
                                             .size(12.0)
                                             .color(self.theme.secondary_text)
                                     ));
@@ -1902,6 +1864,10 @@ impl eframe::App for HackerNewsReaderApp {
                                         ui.add(egui::Label::new("Backspace - Return to stories"));
                                         
                                         ui.add_space(4.0);
+                                        ui.add(egui::Label::new(RichText::new("General Controls:").strong()));
+                                        ui.add(egui::Label::new("Ctrl+R - Refresh current view"));
+                                        
+                                        ui.add_space(4.0);
                                         ui.add(egui::Label::new(RichText::new("Navigation:").strong()));
                                         ui.add(egui::Label::new("Left/Right - Previous/Next page"));
                                         ui.add(egui::Label::new("Up/Down - Scroll up/down"));
@@ -2203,6 +2169,85 @@ impl HackerNewsReaderApp {
         self.check_comment_buttons_recursive(ctx, &comments);
     }
     
+    // Load stories with option to force refresh (bypass cache)
+    fn load_stories_with_refresh(&mut self, force_refresh: bool) {
+        if self.loading {
+            return; // Don't start another load if we're already loading
+        }
+        
+        // Reset search state when loading fresh stories
+        if self.show_search_ui {
+            self.toggle_search_ui();
+        }
+        self.search_query.clear();
+        self.filtered_stories.clear();
+        
+        self.loading = true;
+        self.current_page = 1; // Reset to page 1 when loading fresh stories
+        self.end_of_stories = false; // Reset end of stories flag
+        
+        // Create a new thread for loading
+        let client = self.hn_client.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        
+        // Convert the tab enum to a string
+        let tab_str = match self.current_tab {
+            Tab::Hot => "hot",
+            Tab::New => "new",
+            Tab::Show => "show",
+            Tab::Ask => "ask",
+            Tab::Jobs => "jobs",
+            Tab::Best => "best",
+        };
+        
+        let handle = thread::spawn(move || {
+            let result: Box<dyn std::any::Any + Send> = if force_refresh {
+                // If force refresh, bypass cache
+                match client.fetch_fresh_stories_by_tab(tab_str) {
+                    Ok(stories) => {
+                        let _ = tx.send(Some(stories));
+                        Box::new(())
+                    }
+                    Err(_) => {
+                        let _ = tx.send(None::<Vec<HackerNewsItem>>);
+                        Box::new(())
+                    }
+                }
+            } else {
+                // Otherwise use cached data if available
+                match client.fetch_stories_by_tab(tab_str) {
+                    Ok(stories) => {
+                        let _ = tx.send(Some(stories));
+                        Box::new(())
+                    }
+                    Err(_) => {
+                        let _ = tx.send(None::<Vec<HackerNewsItem>>);
+                        Box::new(())
+                    }
+                }
+            };
+            result
+        });
+        
+        self.load_thread = Some(handle);
+        self.stories_receiver = Some(rx);
+        self.needs_repaint = true;
+    }
+
+    fn refresh_current_view(&mut self, force_refresh: bool) {
+        if self.loading {
+            return; // Don't start another load if we're already loading
+        }
+        
+        if let Some(ref selected_story) = self.selected_story {
+            // We're in comments view - refresh the comments for this story
+            self.view_comments(selected_story.clone(), force_refresh);
+        } else {
+            // We're in stories view - refresh the current tab with force refresh
+            self.load_stories_with_refresh(force_refresh);
+        }
+    }
+    
     // Process keyboard shortcuts
     fn process_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
         // Get keyboard input
@@ -2229,14 +2274,21 @@ impl HackerNewsReaderApp {
                 i.key_pressed(egui::Key::Num4),
                 i.key_pressed(egui::Key::Num5),
                 i.key_pressed(egui::Key::Num6),
-                i.key_pressed(egui::Key::Plus),   // Plus key - Increase font size
+                i.key_pressed(egui::Key::Plus),         // Plus key - Increase font size
                 i.key_pressed(egui::Key::Minus),        // Minus key - Decrease font size
+                i.key_pressed(egui::Key::R),            // R key - For Ctrl+R refresh shortcut
             )
         });
         
-        // Handle search UI keyboard shortcuts (highest priority)
+        // Handle Ctrl+R for refresh (highest priority) - this should work in any view
+        if input.14 && input.23 && !self.loading {  // Ctrl + R and not already loading
+            self.refresh_current_view(true);  // Force refresh (bypass cache)
+            return;
+        }
+        
+        // Handle search UI keyboard shortcuts (high priority)
         // Ctrl+F to show search UI
-        if input.13 && input.14 && !self.show_search_ui {
+        if input.14 && input.13 && !self.show_search_ui {  // Ctrl + F
             self.toggle_search_ui();
             self.needs_repaint = true;
             return;
@@ -2663,7 +2715,8 @@ impl HackerNewsReaderApp {
                             
                             // Add tooltip for comment button with improved stability
                             if comments_btn.hovered() {
-                                let force_refresh = ctx.input(|i| i.modifiers.shift);
+                                // We don't need this anymore since we always force refresh
+                            // let force_refresh = ctx.input(|i| i.modifiers.shift);
                                 
                                 // Fixed position tooltip to avoid flickering
                                 let tooltip_pos = comments_btn.rect.left_top() + egui::vec2(0.0, -40.0);
@@ -2678,10 +2731,9 @@ impl HackerNewsReaderApp {
                                             .stroke(Stroke::new(1.0, self.theme.separator))
                                             .corner_radius(CornerRadius::same(6))
                                             .show(ui, |ui| {
-                                                let text = if force_refresh { "Force refresh & View Comments" } else { "View Comments" };
-                                                ui.add(egui::Label::new(RichText::new(text)));
+                                                ui.add(egui::Label::new(RichText::new("View Comments")));
                                                 ui.add(egui::Label::new(
-                                                    RichText::new("Hold Shift to bypass cache")
+                                                    RichText::new("Click to view thread")
                                                         .size(12.0)
                                                         .color(self.theme.secondary_text)
                                                 ));
