@@ -449,6 +449,8 @@ struct HackerNewsReaderApp {
     search_query: String,
     filtered_stories: Vec<HackerNewsItem>,
     show_search_ui: bool,
+    // Flag to auto-collapse comments when loading
+    auto_collapse_on_load: bool,
 }
 
 impl HackerNewsReaderApp {
@@ -534,6 +536,8 @@ impl HackerNewsReaderApp {
             search_query: String::new(),
             filtered_stories: Vec::new(),
             show_search_ui: false,
+            // Initialize auto-collapse flag
+            auto_collapse_on_load: true,
         }
     }
     
@@ -776,6 +780,14 @@ impl HackerNewsReaderApp {
                     self.comments = comments;
                     self.loading = false;
                     self.comments_receiver = None; // Consume the receiver
+                    
+                    // Auto-collapse all top-level comments if the flag is set
+                    if self.auto_collapse_on_load {
+                        self.collapse_all_top_level_comments();
+                        // Only auto-collapse once when comments are first loaded
+                        self.auto_collapse_on_load = false;
+                    }
+                    
                     self.needs_repaint = true;
                 }
                 Ok(None) => {
@@ -868,6 +880,9 @@ impl HackerNewsReaderApp {
         // Reset pagination when loading a new story
         self.comments_page = 0;
         self.total_comments_count = story.comments_count as usize;
+        
+        // We'll set a flag to auto-collapse comments once they're loaded
+        self.auto_collapse_on_load = true;
         
         if force_refresh {
             // Force refresh comments (bypass cache)

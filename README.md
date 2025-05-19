@@ -19,7 +19,7 @@ A native desktop application for browsing Hacker News with a clean, modern inter
   - Ask HN
   - Jobs
   - Best Stories
-- View comments in a threaded, Reddit-like format
+- View comments in a threaded, Reddit-like format with auto-folding
 - Search and filter stories by title, domain, or author
 - Automatically loads more content when scrolling to the bottom
 - Color-coded stories based on score
@@ -97,6 +97,7 @@ The story list displays up to 150 stories per section (5 pages of 30 stories eac
 
 The comments view shows a threaded display of comments. Features include:
 
+- Auto-folding of comments when first loaded for better overview
 - Collapsible comment threads
 - Author highlighting
 - Nested replies
