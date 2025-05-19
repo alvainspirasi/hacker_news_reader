@@ -2,7 +2,13 @@
 
 A native desktop application for browsing Hacker News with a clean, modern interface. Built with Rust and egui.
 
-![Hacker News Reader](logo/logo.png)
+<p align="center">
+  <img src="logo/logo.png" alt="Hacker News Reader Logo" width="100" />
+</p>
+
+## Screenshot
+
+![Hacker News Reader Screenshot](screenshot.png)
 
 ## Features
 
