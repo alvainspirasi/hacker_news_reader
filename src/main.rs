@@ -291,7 +291,7 @@ impl HackerNewsReaderApp {
                     let _ = tx.send(Some(stories));
                     Box::new(())
                 }
-                Err(_e) => {
+                Err(_) => {
                     let _ = tx.send(None::<Vec<HackerNewsItem>>);
                     Box::new(())
                 }
@@ -414,7 +414,7 @@ impl HackerNewsReaderApp {
                     let _ = tx.send(Some(comments));
                     Box::new(())
                 }
-                Err(_e) => {
+                Err(_) => {
                     let _ = tx.send(None);
                     Box::new(())
                 }
@@ -458,7 +458,7 @@ impl HackerNewsReaderApp {
                         let _ = tx.send(Some(comments));
                         Box::new(())
                     }
-                    Err(_e) => {
+                    Err(_) => {
                         let _ = tx.send(None::<Vec<HackerNewsComment>>);
                         Box::new(())
                     }
@@ -670,7 +670,7 @@ impl eframe::App for HackerNewsReaderApp {
                                         let _ = tx.send(Some(stories));
                                         Box::new(())
                                     }
-                                    Err(_e) => {
+                                    Err(_) => {
                                         let _ = tx.send(None::<Vec<HackerNewsItem>>);
                                         Box::new(())
                                     }

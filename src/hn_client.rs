@@ -40,7 +40,8 @@ impl HackerNewsClient {
     }
     
     // Method to check if cache is valid
-    pub fn has_valid_stories_cache(&self) -> bool {
+    #[allow(dead_code)]
+    fn has_valid_stories_cache(&self) -> bool {
         if let Ok(cache) = self.cache.lock() {
             cache.is_stories_cache_valid(self.cache_ttl_secs)
         } else {
@@ -49,7 +50,8 @@ impl HackerNewsClient {
     }
     
     // Method to get cache age in seconds
-    pub fn get_cache_age(&self) -> Option<u64> {
+    #[allow(dead_code)]
+    fn get_cache_age(&self) -> Option<u64> {
         if let Ok(cache) = self.cache.lock() {
             if cache.stories.is_empty() {
                 return None;
@@ -61,24 +63,10 @@ impl HackerNewsClient {
         }
     }
     
-    pub fn fetch_top_stories(&self) -> Result<Vec<HackerNewsItem>> {
-        // First check the cache with a shorter timeout
-        if let Ok(cache) = self.cache.try_lock() {
-            if cache.is_stories_cache_valid(self.cache_ttl_secs) {
-                return Ok(cache.stories.clone());
-            }
-        }
-        
-        // If cache check fails or cache is not valid, fetch fresh data
-        let stories = self.fetch_fresh_stories()?;
-        
-        // Now try to update the cache, but don't block if we can't get the lock
-        if let Ok(mut cache) = self.cache.try_lock() {
-            cache.update_stories(stories.clone());
-            println!("Updated stories cache with {} items", stories.len());
-        }
-        
-        Ok(stories)
+    // This method is now replaced by fetch_stories_by_tab, but kept for backward compatibility
+    #[allow(dead_code)]
+    fn fetch_top_stories(&self) -> Result<Vec<HackerNewsItem>> {
+        self.fetch_stories_by_tab("hot")
     }
     
     pub fn fetch_stories_by_tab(&self, tab: &str) -> Result<Vec<HackerNewsItem>> {
@@ -108,7 +96,8 @@ impl HackerNewsClient {
     }
     
     // Method to directly fetch stories without checking cache (used as fallback)
-    pub fn fetch_fresh_stories(&self) -> Result<Vec<HackerNewsItem>> {
+    #[allow(dead_code)]
+    fn fetch_fresh_stories(&self) -> Result<Vec<HackerNewsItem>> {
         self.fetch_fresh_stories_by_tab("hot")
     }
     
