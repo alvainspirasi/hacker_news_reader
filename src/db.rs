@@ -21,6 +21,14 @@ pub struct FavoriteStory {
     pub done: bool,
 }
 
+// Structure to hold a viewed story with details
+#[derive(Debug, Clone)]
+pub struct ViewedStory {
+    pub id: String,
+    pub title: String,
+    pub viewed_at: DateTime<Utc>,
+}
+
 impl From<HackerNewsItem> for FavoriteStory {
     fn from(item: HackerNewsItem) -> Self {
         Self {
@@ -90,6 +98,24 @@ impl Database {
             "CREATE TABLE IF NOT EXISTS viewed_stories (
                 id TEXT PRIMARY KEY,
                 viewed_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+        
+        // Create the story_details table if it doesn't exist
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS story_details (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL
+            )",
+            [],
+        )?;
+        
+        // Create the settings table for app preferences
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             )",
             [],
         )?;
@@ -260,5 +286,91 @@ impl Database {
         }
         
         Ok(story_ids)
+    }
+}
+
+impl Database {
+    // Get viewed stories with basic details
+    pub fn get_viewed_stories(&self) -> Result<Vec<ViewedStory>> {
+        let conn = self.conn.lock().map_err(|_| anyhow!("Failed to lock database connection"))?;
+        
+        // First, create a temporary table with story details if it doesn't exist
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS story_details (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL
+            )",
+            [],
+        )?;
+        
+        // Get all viewed stories with their timestamps
+        let mut stmt = conn.prepare(
+            "SELECT v.id, COALESCE(s.title, 'Unknown Title'), v.viewed_at 
+             FROM viewed_stories v
+             LEFT JOIN story_details s ON v.id = s.id
+             ORDER BY v.viewed_at DESC"
+        )?;
+        
+        let stories_iter = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let title: String = row.get(1)?;
+            let viewed_at_str: String = row.get(2)?;
+            
+            let viewed_at = match DateTime::parse_from_rfc3339(&viewed_at_str) {
+                Ok(dt) => dt.with_timezone(&Utc),
+                Err(_) => Utc::now(), // Fallback if parsing fails
+            };
+            
+            Ok(ViewedStory {
+                id,
+                title,
+                viewed_at,
+            })
+        })?;
+        
+        let mut stories = Vec::new();
+        for story in stories_iter {
+            stories.push(story?);
+        }
+        
+        Ok(stories)
+    }
+    
+    // Add or update story details (title, etc.)
+    pub fn save_story_details(&self, id: &str, title: &str) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| anyhow!("Failed to lock database connection"))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO story_details (id, title) VALUES (?1, ?2)",
+            params![id, title],
+        )?;
+        Ok(())
+    }
+    
+    // Save a setting to the database
+    pub fn save_setting(&self, key: &str, value: &str) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| anyhow!("Failed to lock database connection"))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+    
+    // Get a setting from the database
+    #[allow(dead_code)]
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().map_err(|_| anyhow!("Failed to lock database connection"))?;
+        
+        let result = conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |row| row.get::<_, String>(0)
+        );
+        
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(anyhow!(e)),
+        }
     }
 }

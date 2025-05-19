@@ -426,7 +426,7 @@ impl AppTheme {
     
 }
 
-// Define an enum for the different tabs
+// Define an enum for the different main tabs
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Hot,
@@ -435,6 +435,13 @@ enum Tab {
     Ask,
     Jobs,
     Best,
+}
+
+// Define an enum for the side panel tabs
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SidePanelTab {
+    Favorites,
+    History,
 }
 
 struct HackerNewsReaderApp {
@@ -485,7 +492,17 @@ struct HackerNewsReaderApp {
     // We'll remove the comment_font_size field from the struct
     // and use the global GLOBAL_FONT_SIZE instead
     // Set of story IDs that the user has viewed
-    viewed_story_ids: std::collections::HashSet<String>
+    viewed_story_ids: std::collections::HashSet<String>,
+    // Current side panel tab
+    current_side_panel_tab: SidePanelTab,
+    // Viewed stories for the history tab
+    history_stories: Vec<db::ViewedStory>,
+    // Flag to indicate if history is loading
+    history_loading: bool,
+    // Scroll offset for history panel
+    history_scroll_offset: f32,
+    // Search query for history
+    history_search_query: String
 }
 
 impl HackerNewsReaderApp {
@@ -591,7 +608,14 @@ impl HackerNewsReaderApp {
                     }
                 }
                 viewed_ids
-            }
+            },
+            // Initialize side panel tab
+            current_side_panel_tab: SidePanelTab::Favorites,
+            // Initialize history
+            history_stories: Vec::new(),
+            history_loading: false,
+            history_scroll_offset: 0.0,
+            history_search_query: String::new()
         }
     }
     
@@ -934,8 +958,8 @@ impl HackerNewsReaderApp {
     }
     
     fn view_comments(&mut self, story: HackerNewsItem, force_refresh: bool) {
-        // Mark the story as viewed
-        self.mark_story_as_viewed(&story.id);
+        // Mark the story as viewed, including title
+        self.mark_story_as_viewed(&story.id, Some(&story.title));
         
         self.selected_story = Some(story.clone());
         
@@ -1011,6 +1035,9 @@ impl HackerNewsReaderApp {
         if let Ok(mut font_size) = GLOBAL_FONT_SIZE.lock() {
             // Increase by 1 point (use the global value)
             *font_size = (*font_size + 1.0).min(MAX_FONT_SIZE);
+            
+            // Save the new font size to the database
+            self.save_font_size_setting(*font_size);
         }
         
         self.needs_repaint = true;
@@ -1024,9 +1051,33 @@ impl HackerNewsReaderApp {
         if let Ok(mut font_size) = GLOBAL_FONT_SIZE.lock() {
             // Decrease by 1 point (use the global value)
             *font_size = (*font_size - 1.0).max(MIN_FONT_SIZE);
+            
+            // Save the new font size to the database
+            self.save_font_size_setting(*font_size);
         }
         
         self.needs_repaint = true;
+    }
+    
+    // Save the font size setting to the database
+    fn save_font_size_setting(&self, font_size: f32) {
+        if let Err(e) = self.database.save_setting("comment_font_size", &font_size.to_string()) {
+            eprintln!("Failed to save font size setting: {}", e);
+        }
+    }
+    
+    // Load the font size setting from the database
+    #[allow(dead_code)]
+    fn load_font_size_setting(&self) -> Option<f32> {
+        match self.database.get_setting("comment_font_size") {
+            Ok(Some(value)) => {
+                match value.parse::<f32>() {
+                    Ok(font_size) => Some(font_size),
+                    Err(_) => None,
+                }
+            },
+            _ => None,
+        }
     }
     
     fn switch_tab(&mut self, tab: Tab) {
@@ -1190,9 +1241,9 @@ impl eframe::App for HackerNewsReaderApp {
             self.needs_repaint = false;
         }
         
-        // Render favorites panel if it's visible
+        // Render side panel if it's visible
         if self.show_favorites_panel {
-            self.render_favorites_panel(ctx);
+            self.render_side_panel(ctx);
         }
         
         // Set up main layout
@@ -2813,6 +2864,9 @@ impl HackerNewsReaderApp {
                     if slider.changed() {
                         // Update the global font size
                         *font_size_guard = font_size;
+                        
+                        // Save the font size setting to the database
+                        self.save_font_size_setting(font_size);
                     }
                 }
                 
@@ -3522,6 +3576,23 @@ impl HackerNewsReaderApp {
             }
         }
     }
+    
+    // Load history stories from the database
+    fn load_history(&mut self) {
+        self.history_loading = true;
+
+        match self.database.get_viewed_stories() {
+            Ok(history) => {
+                self.history_stories = history;
+                self.history_loading = false;
+                self.needs_repaint = true;
+            }
+            Err(e) => {
+                eprintln!("Error loading history: {}", e);
+                self.history_loading = false;
+            }
+        }
+    }
 
     fn is_favorite(&self, id: &str) -> bool {
         match self.database.is_favorite(id) {
@@ -3545,13 +3616,20 @@ impl HackerNewsReaderApp {
     }
     
     // Mark a story as viewed, updating both the local set and the database
-    fn mark_story_as_viewed(&mut self, story_id: &str) {
+    fn mark_story_as_viewed(&mut self, story_id: &str, story_title: Option<&str>) {
         // Update local set
         self.viewed_story_ids.insert(story_id.to_string());
         
-        // Update database
+        // Update database viewed status
         if let Err(e) = self.database.mark_story_as_viewed(story_id) {
             eprintln!("Error marking story as viewed: {}", e);
+        }
+        
+        // If we have a title, save it as well
+        if let Some(title) = story_title {
+            if let Err(e) = self.database.save_story_details(story_id, title) {
+                eprintln!("Error saving story details: {}", e);
+            }
         }
     }
     
@@ -3566,156 +3644,285 @@ impl HackerNewsReaderApp {
         self.needs_repaint = true;
     }
 
-    fn render_favorites_panel(&mut self, ctx: &egui::Context) {
+    // Render the side panel with tabs for Favorites and History
+    fn render_side_panel(&mut self, ctx: &egui::Context) {
         let open = self.show_favorites_panel;
         
-        egui::SidePanel::left("favorites_panel")
+        egui::SidePanel::left("side_panel")
             .resizable(true)
             .default_width(300.0)
             .width_range(250.0..=400.0)
             .show_animated(ctx, open, |ui| {
                 ui.vertical(|ui| {
                     ui.add_space(8.0);
-                    ui.heading(
-                        RichText::new("Favorites")
-                            .size(20.0)
-                            .color(self.theme.highlight)
-                    );
+                    
+                    // Add tabs for Favorites and History
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(
+                            self.current_side_panel_tab == SidePanelTab::Favorites,
+                            RichText::new("Favorites")
+                                .size(16.0)
+                                .color(self.theme.text)
+                                .strong()
+                        ).clicked() {
+                            self.current_side_panel_tab = SidePanelTab::Favorites;
+                            // Reload favorites when switching to this tab
+                            self.reload_favorites();
+                        }
+                        
+                        ui.add_space(20.0);
+                        
+                        if ui.selectable_label(
+                            self.current_side_panel_tab == SidePanelTab::History,
+                            RichText::new("History")
+                                .size(16.0)
+                                .color(self.theme.text)
+                                .strong()
+                        ).clicked() {
+                            self.current_side_panel_tab = SidePanelTab::History;
+                            // Load history when switching to this tab
+                            self.load_history();
+                        }
+                    });
+                    
                     ui.add_space(8.0);
                     ui.add(egui::Separator::default().spacing(8.0));
                     
-                    if self.favorites_loading {
-                        ui.add_space(20.0);
-                        ui.vertical_centered(|ui| {
-                            ui.spinner();
-                            ui.add_space(8.0);
-                            ui.label("Loading favorites...");
-                        });
-                    } else if self.favorites.is_empty() {
-                        ui.add_space(20.0);
-                        ui.vertical_centered(|ui| {
-                            ui.label(
-                                RichText::new("No favorites yet")
-                                    .color(self.theme.secondary_text)
-                                    .italics()
-                            );
-                            ui.add_space(8.0);
-                            ui.label(
-                                RichText::new("Click the star icon on a story to add it to your favorites")
-                                    .color(self.theme.secondary_text)
-                                    .size(14.0)
-                            );
-                        });
-                    } else {
-                        // Render favorites list
-                        let favorites_clone = self.favorites.clone(); // Clone to avoid borrow issues
-                        let scroll_response = ScrollArea::vertical()
-                            .id_salt("favorites_scroll_area")
-                            .auto_shrink([false, false])
-                            .vertical_scroll_offset(self.favorites_scroll_offset)
-                            .show(ui, |ui| {
-                                // Split favorites into "Todo" and "Done" lists
-                                let (todo_favorites, done_favorites): (Vec<_>, Vec<_>) = 
-                                    favorites_clone.iter().partition(|f| !f.done);
-                                
-                                // Render "Todo" section
-                                ui.vertical(|ui| {
-                                    ui.add_space(8.0);
-                                    ui.heading(
-                                        RichText::new("Todo")
-                                            .size(18.0)
-                                            .color(self.theme.text)
-                                    );
-                                    
-                                    if todo_favorites.is_empty() {
-                                        ui.add_space(8.0);
-                                        ui.label(
-                                            RichText::new("No pending stories")
-                                                .color(self.theme.secondary_text)
-                                                .italics()
-                                        );
-                                    } else {
-                                        for favorite in &todo_favorites {
-                                            self.render_favorite_item_with_checkbox(ui, favorite);
-                                        }
-                                    }
-                                });
-                                
-                                // Separator between Todo and Done
-                                ui.add_space(16.0);
-                                ui.add(egui::Separator::default().spacing(8.0));
-                                
-                                // Render "Done" section
-                                ui.vertical(|ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.add_space(8.0);
-                                        ui.heading(
-                                            RichText::new("Done")
-                                                .size(18.0)
-                                                .color(self.theme.text)
-                                        );
-                                        
-                                        // Only show clear button if there are done favorites
-                                        if !done_favorites.is_empty() {
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                let clear_btn = ui.add_sized(
-                                                    [60.0, 24.0],
-                                                    egui::Button::new(
-                                                        RichText::new("Clear All")
-                                                            .size(14.0)
-                                                            .color(self.theme.button_foreground)
-                                                    )
-                                                    .corner_radius(CornerRadius::same(4))
-                                                    .fill(self.theme.button_background)
-                                                );
-                                                
-                                                if clear_btn.clicked() {
-                                                    // Clear all done favorites
-                                                    match self.database.clear_done_favorites() {
-                                                        Ok(count) => {
-                                                            println!("Cleared {} done favorites", count);
-                                                            // Reload favorites immediately
-                                                            self.reload_favorites();
-                                                        },
-                                                        Err(e) => {
-                                                            eprintln!("Error clearing done favorites: {}", e);
-                                                        }
-                                                    }
-                                                    self.needs_repaint = true;
-                                                }
-                                                
-                                                if clear_btn.hovered() {
-                                                    ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
-                                                }
-                                            });
-                                        }
-                                    });
-                                    
-                                    if done_favorites.is_empty() {
-                                        ui.add_space(8.0);
-                                        ui.label(
-                                            RichText::new("No completed stories")
-                                                .color(self.theme.secondary_text)
-                                                .italics()
-                                        );
-                                    } else {
-                                        for favorite in &done_favorites {
-                                            self.render_favorite_item_with_checkbox(ui, favorite);
-                                        }
-                                    }
-                                });
-                                
-                                ui.add_space(20.0);
-                            });
-                            
-                        // Store the scroll position
-                        self.favorites_scroll_offset = scroll_response.state.offset.y;
+                    // Render the content based on the selected tab
+                    match self.current_side_panel_tab {
+                        SidePanelTab::Favorites => self.render_favorites_content(ui),
+                        SidePanelTab::History => self.render_history_content(ui),
                     }
                 });
             });
             
         // Update the state variable if the panel was closed by clicking the X
         self.show_favorites_panel = open;
+    }
+    
+    // Render the favorites tab content
+    fn render_favorites_content(&mut self, ui: &mut egui::Ui) {
+        if self.favorites_loading {
+            ui.add_space(20.0);
+            ui.vertical_centered(|ui| {
+                ui.spinner();
+                ui.add_space(8.0);
+                ui.label("Loading favorites...");
+            });
+        } else if self.favorites.is_empty() {
+            ui.add_space(20.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new("No favorites yet")
+                        .color(self.theme.secondary_text)
+                        .italics()
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("Click the star icon on a story to add it to your favorites")
+                        .color(self.theme.secondary_text)
+                        .size(14.0)
+                );
+            });
+        } else {
+            // Render favorites list
+            let favorites_clone = self.favorites.clone(); // Clone to avoid borrow issues
+            let scroll_response = ScrollArea::vertical()
+                .id_salt("favorites_scroll_area")
+                .auto_shrink([false, false])
+                .vertical_scroll_offset(self.favorites_scroll_offset)
+                .show(ui, |ui| {
+                    // Split favorites into "Todo" and "Done" lists
+                    let (todo_favorites, done_favorites): (Vec<_>, Vec<_>) = 
+                        favorites_clone.iter().partition(|f| !f.done);
+                    
+                    // Render "Todo" section
+                    ui.vertical(|ui| {
+                        ui.add_space(8.0);
+                        ui.heading(
+                            RichText::new("Todo")
+                                .size(18.0)
+                                .color(self.theme.text)
+                        );
+                        
+                        if todo_favorites.is_empty() {
+                            ui.add_space(8.0);
+                            ui.label(
+                                RichText::new("No pending stories")
+                                    .color(self.theme.secondary_text)
+                                    .italics()
+                            );
+                        } else {
+                            for favorite in &todo_favorites {
+                                self.render_favorite_item_with_checkbox(ui, favorite);
+                            }
+                        }
+                    });
+                    
+                    // Separator between Todo and Done
+                    ui.add_space(16.0);
+                    ui.add(egui::Separator::default().spacing(8.0));
+                    
+                    // Render "Done" section
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.add_space(8.0);
+                            ui.heading(
+                                RichText::new("Done")
+                                    .size(18.0)
+                                    .color(self.theme.text)
+                            );
+                            
+                            // Only show clear button if there are done favorites
+                            if !done_favorites.is_empty() {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let clear_btn = ui.add_sized(
+                                        [60.0, 24.0],
+                                        egui::Button::new(
+                                            RichText::new("Clear All")
+                                                .size(14.0)
+                                                .color(self.theme.button_foreground)
+                                        )
+                                        .corner_radius(CornerRadius::same(4))
+                                        .fill(self.theme.button_background)
+                                    );
+                                    
+                                    if clear_btn.clicked() {
+                                        // Clear all done favorites
+                                        match self.database.clear_done_favorites() {
+                                            Ok(count) => {
+                                                println!("Cleared {} done favorites", count);
+                                                // Reload favorites immediately
+                                                self.reload_favorites();
+                                            },
+                                            Err(e) => {
+                                                eprintln!("Error clearing done favorites: {}", e);
+                                            }
+                                        }
+                                        self.needs_repaint = true;
+                                    }
+                                    
+                                    if clear_btn.hovered() {
+                                        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                                    }
+                                });
+                            }
+                        });
+                        
+                        if done_favorites.is_empty() {
+                            ui.add_space(8.0);
+                            ui.label(
+                                RichText::new("No completed stories")
+                                    .color(self.theme.secondary_text)
+                                    .italics()
+                            );
+                        } else {
+                            for favorite in &done_favorites {
+                                self.render_favorite_item_with_checkbox(ui, favorite);
+                            }
+                        }
+                    });
+                    
+                    ui.add_space(20.0);
+                });
+                
+            // Store the scroll position
+            self.favorites_scroll_offset = scroll_response.state.offset.y;
+        }
+    }
+    
+    // Render the history tab content
+    fn render_history_content(&mut self, ui: &mut egui::Ui) {
+        // Add search bar at the top
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Search:").color(self.theme.text).size(14.0));
+            ui.add_space(4.0);
+            
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut self.history_search_query)
+                    .hint_text("Search in history...")
+                    .desired_width(220.0)
+            );
+            
+            if response.changed() {
+                // Search query changed, filter results
+                self.needs_repaint = true;
+            }
+            
+            if !self.history_search_query.is_empty() {
+                // Add clear button for search
+                if ui.button("✕").clicked() {
+                    self.history_search_query.clear();
+                    self.needs_repaint = true;
+                }
+            }
+        });
+        
+        ui.add_space(8.0);
+        
+        if self.history_loading {
+            ui.add_space(20.0);
+            ui.vertical_centered(|ui| {
+                ui.spinner();
+                ui.add_space(8.0);
+                ui.label("Loading history...");
+            });
+        } else if self.history_stories.is_empty() {
+            ui.add_space(20.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new("No browsing history yet")
+                        .color(self.theme.secondary_text)
+                        .italics()
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("View stories to add them to your history")
+                        .color(self.theme.secondary_text)
+                        .size(14.0)
+                );
+            });
+        } else {
+            // Filter history stories based on search query
+            // Clone stories to avoid borrow checker issues
+            let stories_to_filter = self.history_stories.clone();
+            let filtered_stories: Vec<db::ViewedStory> = if !self.history_search_query.is_empty() {
+                let query = self.history_search_query.to_lowercase();
+                stories_to_filter.into_iter()
+                    .filter(|story| story.title.to_lowercase().contains(&query))
+                    .collect()
+            } else {
+                stories_to_filter
+            };
+            
+            if filtered_stories.is_empty() {
+                ui.add_space(20.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(
+                        RichText::new("No matching stories found")
+                            .color(self.theme.secondary_text)
+                            .italics()
+                    );
+                });
+            } else {
+                // Render filtered history list
+                let scroll_response = ScrollArea::vertical()
+                    .id_salt("history_scroll_area")
+                    .auto_shrink([false, false])
+                    .vertical_scroll_offset(self.history_scroll_offset)
+                    .show(ui, |ui| {
+                        for story in &filtered_stories {
+                            // Pass a reference to the story
+                            self.render_history_item(ui, story);
+                        }
+                        
+                        ui.add_space(20.0);
+                    });
+                    
+                // Store the scroll position
+                self.history_scroll_offset = scroll_response.state.offset.y;
+            }
+        }
     }
     
     fn render_favorite_item_with_checkbox(&mut self, ui: &mut egui::Ui, favorite: &FavoriteStory) {
@@ -3883,6 +4090,100 @@ impl HackerNewsReaderApp {
             self.show_favorites_panel = false;
             self.needs_repaint = true;
         }
+    }
+    
+    #[allow(dead_code)]
+    fn render_history_item(&mut self, ui: &mut egui::Ui, story: &db::ViewedStory) {
+        ui.add_space(8.0);
+        
+        // Create a card for each history item
+        egui::Frame::new()
+            .fill(self.theme.card_background)
+            .corner_radius(egui::CornerRadius::same(8))
+            .stroke(egui::Stroke::new(1.0, self.theme.separator))
+            .inner_margin(8.0)
+            .outer_margin(4.0)
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    // Title with wrapped text
+                    let title_text = RichText::new(&story.title)
+                        .color(self.theme.get_viewed_story_color())
+                        .size(16.0);
+                    
+                    let title_label = ui.add(
+                        egui::Label::new(title_text)
+                            .wrap()
+                            .sense(egui::Sense::click())
+                    );
+                    
+                    // Handle click on history item
+                    if title_label.clicked() {
+                        // If we have this story in our current stories list, view it
+                        // Otherwise we would need to fetch it again from the API
+                        for current_story in &self.stories {
+                            if current_story.id == story.id {
+                                let story_clone = current_story.clone();
+                                self.view_comments(story_clone, false);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if title_label.hovered() {
+                        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                    }
+                    
+                    // Metadata row
+                    ui.horizontal(|ui| {
+                        // Add when viewed timestamp
+                        let viewed_local = story.viewed_at.with_timezone(&chrono::Local);
+                        let date_str = viewed_local.format("%Y-%m-%d %H:%M").to_string();
+                        
+                        ui.label(
+                            RichText::new(format!("Viewed: {}", date_str))
+                                .color(self.theme.secondary_text)
+                                .size(13.0)
+                                .italics()
+                        );
+                        
+                        // Add a star button to save to favorites
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let is_favorite = self.is_favorite(&story.id);
+                            let star_icon = if is_favorite { "★" } else { "☆" };
+                            let star_color = if is_favorite { self.theme.highlight } else { self.theme.secondary_text };
+                            
+                            let star_btn = ui.add(
+                                egui::Button::new(
+                                    RichText::new(star_icon)
+                                        .size(16.0)
+                                        .color(star_color)
+                                )
+                                .frame(false)
+                            );
+                            
+                            if star_btn.clicked() {
+                                if is_favorite {
+                                    // Remove from favorites
+                                    if let Err(e) = self.database.remove_favorite(&story.id) {
+                                        eprintln!("Error removing favorite: {}", e);
+                                    }
+                                } else {
+                                    // Find the story in our list to get all details
+                                    for current_story in &self.stories {
+                                        if current_story.id == story.id {
+                                            if let Err(e) = self.database.add_favorite(current_story) {
+                                                eprintln!("Error adding favorite: {}", e);
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                                self.reload_favorites();
+                            }
+                        });
+                    });
+                });
+            });
     }
     
     #[allow(dead_code)]
