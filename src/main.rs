@@ -2874,9 +2874,19 @@ impl HackerNewsReaderApp {
             // Replace other HN-specific links with properly formatted ones
             let text = text.replace("<a href=\"https://news.ycombinator.com/", "<a href=\"");
             
+            // Replace paragraph tags with newlines to maintain paragraph structure
+            let text = text.replace("<p>", "\n").replace("</p>", "\n");
+            
+            // Replace <br> tags with newlines
+            let text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n");
+            
             // Remove any remaining HTML tags while preserving text
             let regex = regex::Regex::new(r#"<[^>]+>"#).unwrap();
-            regex.replace_all(&text, "").to_string()
+            let text = regex.replace_all(&text, "").to_string();
+            
+            // Normalize whitespace: replace multiple consecutive newlines with just two
+            let whitespace_regex = regex::Regex::new(r"\n{3,}").unwrap();
+            whitespace_regex.replace_all(&text, "\n\n").to_string()
         };
         
         // Cache the result for future use
@@ -3205,16 +3215,20 @@ impl HackerNewsReaderApp {
                         });
                         
                         if !is_collapsed {
-                            ui.add_space(4.0);
+                            // Space between comment header and body
+                            ui.add_space(6.0);
                             
                             // Comment text with cleaned HTML
                             let clean_text = self.clean_html(&comment.text);
                             
                             // Use the global font size
                             if let Ok(font_size) = GLOBAL_FONT_SIZE.lock() {
-                                // Apply the font size to the comment text
+                                // Create a label with increased line spacing
+                                let text_with_spacing = clean_text.replace("\n", "\n\n");
+                                
+                                // Apply the font size to the comment text and increase spacing
                                 ui.label(
-                                    RichText::new(&clean_text)
+                                    RichText::new(&text_with_spacing)
                                         .color(self.theme.text)
                                         .size(*font_size) // Use the global font size
                                 );
@@ -3222,6 +3236,7 @@ impl HackerNewsReaderApp {
                             
                             // Recursively render child comments (only if not collapsed)
                             if !comment.children.is_empty() {
+                                // Space between comment text and child comments
                                 ui.add_space(8.0);
                                 
                                 // Limit the number of children rendered for very large threads
