@@ -85,6 +85,15 @@ impl Database {
             [],
         )?;
         
+        // Create the viewed_stories table if it doesn't exist
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS viewed_stories (
+                id TEXT PRIMARY KEY,
+                viewed_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+        
         // Add the 'done' column if it doesn't exist (for existing databases)
         let columns = conn.query_row(
             "SELECT COUNT(*) FROM pragma_table_info('favorites') WHERE name = 'done'",
@@ -216,5 +225,40 @@ impl Database {
         }
 
         Ok(favorites)
+    }
+    
+    // Add a story to viewed stories
+    pub fn mark_story_as_viewed(&self, story_id: &str) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| anyhow!("Failed to lock database connection"))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO viewed_stories (id, viewed_at) VALUES (?1, ?2)",
+            params![story_id, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+    
+    // Check if a story has been viewed
+    pub fn is_story_viewed(&self, story_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| anyhow!("Failed to lock database connection"))?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM viewed_stories WHERE id = ?1",
+            params![story_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+    
+    // Get all viewed story IDs
+    pub fn get_viewed_story_ids(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock().map_err(|_| anyhow!("Failed to lock database connection"))?;
+        let mut stmt = conn.prepare("SELECT id FROM viewed_stories")?;
+        let story_ids_iter = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        
+        let mut story_ids = Vec::new();
+        for story_id in story_ids_iter {
+            story_ids.push(story_id?);
+        }
+        
+        Ok(story_ids)
     }
 }

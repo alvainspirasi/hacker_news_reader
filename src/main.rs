@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui::{Color32, RichText, ScrollArea, Ui, ViewportBuilder, Stroke, CornerRadius};
 use std::thread;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use image::ImageReader;
 
 mod hn_client;
@@ -12,8 +12,10 @@ use crate::hn_client::HackerNewsClient;
 use crate::models::{HackerNewsItem, HackerNewsComment};
 use crate::db::{Database, FavoriteStory};
 
-// Create a global font size
-static mut GLOBAL_FONT_SIZE: f32 = 15.0;
+// Create a global font size with proper synchronization
+lazy_static::lazy_static! {
+    static ref GLOBAL_FONT_SIZE: Mutex<f32> = Mutex::new(15.0);
+}
 
 // Function to load an image as an icon
 fn load_icon(path: &str) -> Result<egui::IconData, Box<dyn std::error::Error>> {
@@ -84,8 +86,8 @@ fn main() -> Result<(), eframe::Error> {
                 if let Some(font_size_str) = storage.get_string("comment_font_size") {
                     if let Ok(font_size) = font_size_str.parse::<f32>() {
                         // Set the global font size within valid range (10.0-24.0)
-                        unsafe {
-                            GLOBAL_FONT_SIZE = font_size.max(10.0).min(24.0);
+                        if let Ok(mut global_font_size) = GLOBAL_FONT_SIZE.lock() {
+                            *global_font_size = font_size.max(10.0).min(24.0);
                         }
                     }
                 }
@@ -118,6 +120,20 @@ struct AppTheme {
 }
 
 impl AppTheme {
+    // Returns a grayish color for viewed stories
+    fn get_viewed_story_color(&self) -> Color32 {
+        // Check if we're in dark mode or light mode
+        let is_dark_mode = self.background.r() <= 128 || self.background.g() <= 128 || self.background.b() <= 128;
+        
+        if is_dark_mode {
+            // Grayer text in dark mode (less bright)
+            Color32::from_rgb(150, 150, 155)
+        } else {
+            // Grayer text in light mode (less contrast)
+            Color32::from_rgb(120, 120, 125)
+        }
+    }
+    
     fn dark() -> Self {
         Self {
             background: Color32::from_rgb(18, 18, 18),
@@ -468,6 +484,8 @@ struct HackerNewsReaderApp {
     clean_html_cache: std::collections::HashMap<String, String>,
     // We'll remove the comment_font_size field from the struct
     // and use the global GLOBAL_FONT_SIZE instead
+    // Set of story IDs that the user has viewed
+    viewed_story_ids: std::collections::HashSet<String>
 }
 
 impl HackerNewsReaderApp {
@@ -543,7 +561,7 @@ impl HackerNewsReaderApp {
             stories_scroll_offset: 0.0,
             comments_scroll_offset: 0.0,
             // Initialize favorites
-            database,
+            database: database.clone(),
             favorites,
             show_favorites_panel: false,
             favorites_loading: false,
@@ -558,6 +576,22 @@ impl HackerNewsReaderApp {
             // Initialize HTML cleaning cache
             clean_html_cache: std::collections::HashMap::new(),
             // comment_font_size removed - using global value
+            // Initialize viewed stories set
+            viewed_story_ids: {
+                // Load viewed stories from database
+                let mut viewed_ids = std::collections::HashSet::new();
+                match database.clone().get_viewed_story_ids() {
+                    Ok(ids) => {
+                        for id in ids {
+                            viewed_ids.insert(id);
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Failed to load viewed stories: {}", e);
+                    }
+                }
+                viewed_ids
+            }
         }
     }
     
@@ -900,6 +934,9 @@ impl HackerNewsReaderApp {
     }
     
     fn view_comments(&mut self, story: HackerNewsItem, force_refresh: bool) {
+        // Mark the story as viewed
+        self.mark_story_as_viewed(&story.id);
+        
         self.selected_story = Some(story.clone());
         
         // Clear collapsed comments when loading a new story
@@ -971,9 +1008,9 @@ impl HackerNewsReaderApp {
         // Maximum font size to prevent UI issues
         const MAX_FONT_SIZE: f32 = 24.0;
         
-        unsafe {
+        if let Ok(mut font_size) = GLOBAL_FONT_SIZE.lock() {
             // Increase by 1 point (use the global value)
-            GLOBAL_FONT_SIZE = (GLOBAL_FONT_SIZE + 1.0).min(MAX_FONT_SIZE);
+            *font_size = (*font_size + 1.0).min(MAX_FONT_SIZE);
         }
         
         self.needs_repaint = true;
@@ -984,9 +1021,9 @@ impl HackerNewsReaderApp {
         // Minimum font size for readability
         const MIN_FONT_SIZE: f32 = 10.0;
         
-        unsafe {
+        if let Ok(mut font_size) = GLOBAL_FONT_SIZE.lock() {
             // Decrease by 1 point (use the global value)
-            GLOBAL_FONT_SIZE = (GLOBAL_FONT_SIZE - 1.0).max(MIN_FONT_SIZE);
+            *font_size = (*font_size - 1.0).max(MIN_FONT_SIZE);
         }
         
         self.needs_repaint = true;
@@ -1075,8 +1112,8 @@ impl eframe::App for HackerNewsReaderApp {
         storage.set_string("is_dark_mode", self.is_dark_mode.to_string());
         
         // Save font size preference from global value
-        unsafe {
-            storage.set_string("comment_font_size", GLOBAL_FONT_SIZE.to_string());
+        if let Ok(font_size) = GLOBAL_FONT_SIZE.lock() {
+            storage.set_string("comment_font_size", font_size.to_string());
         }
     }
 
@@ -1588,10 +1625,19 @@ impl eframe::App for HackerNewsReaderApp {
                 // Story title with color based on score
                 ui.add_space(8.0);
                 let title_color = self.theme.get_title_color(story.score);
+                // Use a different color for viewed stories
+                let color = if self.is_story_viewed(&story.id) {
+                    // Use grayish color for viewed stories
+                    self.theme.get_viewed_story_color()
+                } else {
+                    // Use normal color based on score
+                    title_color
+                };
+                
                 ui.label(
                     RichText::new(&story.title)
                         .size(22.0)
-                        .color(title_color)
+                        .color(color)
                         .strong()
                 );
                 ui.add_space(8.0);
@@ -2478,10 +2524,19 @@ impl HackerNewsReaderApp {
                         
                         // Story title with clickable behavior and color highlighting based on score
                         let score_color = self.theme.get_title_color(story.score);
+                        // Use a different color for viewed stories
+                        let color = if self.is_story_viewed(&story.id) {
+                            // Use grayish color for viewed stories
+                            self.theme.get_viewed_story_color()
+                        } else {
+                            // Use normal color based on score
+                            score_color
+                        };
+                        
                         let title_label = ui.add(
                             egui::Label::new(
                                 RichText::new(&story.title)
-                                    .color(score_color)
+                                    .color(color)
                                     .size(16.0)
                                     .strong()
                             ).sense(egui::Sense::click())
@@ -2749,15 +2804,15 @@ impl HackerNewsReaderApp {
                 );
                 
                 // Add a slider for direct font size control
-                unsafe {
-                    let mut font_size = GLOBAL_FONT_SIZE;
+                if let Ok(mut font_size_guard) = GLOBAL_FONT_SIZE.lock() {
+                    let mut font_size = *font_size_guard;
                     let slider = ui.add(egui::Slider::new(&mut font_size, 10.0..=24.0)
                         .step_by(1.0)
                         .text("pt"));
                     
                     if slider.changed() {
-                        // Update the global font size directly
-                        GLOBAL_FONT_SIZE = font_size;
+                        // Update the global font size
+                        *font_size_guard = font_size;
                     }
                 }
                 
@@ -2787,9 +2842,9 @@ impl HackerNewsReaderApp {
                 }
                 
                 // Show current size
-                unsafe {
+                if let Ok(font_size) = GLOBAL_FONT_SIZE.lock() {
                     ui.label(
-                        RichText::new(format!("{:.0}pt", GLOBAL_FONT_SIZE))
+                        RichText::new(format!("{:.0}pt", *font_size))
                             .color(self.theme.text)
                             .size(14.0)
                     );
@@ -3050,12 +3105,12 @@ impl HackerNewsReaderApp {
                             let clean_text = self.clean_html(&comment.text);
                             
                             // Use the global font size
-                            unsafe {
+                            if let Ok(font_size) = GLOBAL_FONT_SIZE.lock() {
                                 // Apply the font size to the comment text
                                 ui.label(
                                     RichText::new(&clean_text)
                                         .color(self.theme.text)
-                                        .size(GLOBAL_FONT_SIZE) // Use the global font size
+                                        .size(*font_size) // Use the global font size
                                 );
                             }
                             
@@ -3472,6 +3527,31 @@ impl HackerNewsReaderApp {
         match self.database.is_favorite(id) {
             Ok(is_fav) => is_fav,
             Err(_) => false,
+        }
+    }
+    
+    // Check if a story has been viewed by the user
+    fn is_story_viewed(&self, story_id: &str) -> bool {
+        // First check local set
+        if self.viewed_story_ids.contains(story_id) {
+            return true;
+        }
+        
+        // Then check database (in case the set was not properly loaded)
+        match self.database.is_story_viewed(story_id) {
+            Ok(is_viewed) => is_viewed,
+            Err(_) => false
+        }
+    }
+    
+    // Mark a story as viewed, updating both the local set and the database
+    fn mark_story_as_viewed(&mut self, story_id: &str) {
+        // Update local set
+        self.viewed_story_ids.insert(story_id.to_string());
+        
+        // Update database
+        if let Err(e) = self.database.mark_story_as_viewed(story_id) {
+            eprintln!("Error marking story as viewed: {}", e);
         }
     }
     
