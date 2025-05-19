@@ -1,0 +1,14 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Local development
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Debug files
+hn_debug.html
