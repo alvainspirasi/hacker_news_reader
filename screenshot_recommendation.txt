@@ -1,0 +1,32 @@
+## Screenshot Recommendation
+
+To make your README more visually appealing and to give potential users a clear preview of the application, I recommend adding a screenshot to your README.md file.
+
+### How to add a screenshot:
+
+1. Take a high-quality screenshot of your Hacker News Reader application showing:
+   - The main interface with stories
+   - The favorites panel (if possible)
+   - Search functionality in action
+   - Dark mode if that's your preferred theme (as it often looks nicer in screenshots)
+
+2. Save the screenshot as `screenshot.png` in the `logo` directory alongside your logo.png file.
+
+3. Add the screenshot to your README.md by inserting this line below the project description:
+
+```markdown
+![Hacker News Reader Screenshot](logo/screenshot.png)
+```
+
+or replace the current logo display with:
+
+```markdown
+<p align="center">
+  <img src="logo/logo.png" alt="Hacker News Reader Logo" width="100" />
+  <img src="logo/screenshot.png" alt="Hacker News Reader Screenshot" width="800" />
+</p>
+```
+
+This will make your project more appealing to potential users and contributors, as they can immediately see what your application looks like and how it functions.
+
+Note: When taking the screenshot, try to display interesting content that demonstrates the app's features (search results, favorites, etc.) rather than just the default view.

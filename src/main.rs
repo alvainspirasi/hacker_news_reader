@@ -445,6 +445,10 @@ struct HackerNewsReaderApp {
     favorites_scroll_offset: f32,
     // Pending actions to avoid borrow checker issues
     pending_favorites_toggle: Option<String>,  // Story ID to toggle
+    // Search functionality
+    search_query: String,
+    filtered_stories: Vec<HackerNewsItem>,
+    show_search_ui: bool,
 }
 
 impl HackerNewsReaderApp {
@@ -526,6 +530,10 @@ impl HackerNewsReaderApp {
             favorites_loading: false,
             favorites_scroll_offset: 0.0,
             pending_favorites_toggle: None,
+            // Initialize search functionality
+            search_query: String::new(),
+            filtered_stories: Vec::new(),
+            show_search_ui: false,
         }
     }
     
@@ -533,6 +541,13 @@ impl HackerNewsReaderApp {
         if self.loading {
             return; // Don't start another load if we're already loading
         }
+        
+        // Reset search state when loading fresh stories
+        if self.show_search_ui {
+            self.toggle_search_ui();
+        }
+        self.search_query.clear();
+        self.filtered_stories.clear();
         
         self.loading = true;
         self.current_page = 1; // Reset to page 1 when loading fresh stories
@@ -916,6 +931,11 @@ impl HackerNewsReaderApp {
             self.selected_story = None;
             self.comments.clear();
             
+            // Reset search state when switching tabs
+            self.search_query.clear();
+            self.filtered_stories.clear();
+            self.show_search_ui = false;
+            
             // Reset pagination variables
             self.current_page = 1;
             self.end_of_stories = false;
@@ -929,6 +949,42 @@ impl HackerNewsReaderApp {
             self.load_stories();
             self.needs_repaint = true;
         }
+    }
+    
+    // Toggle the search UI visibility
+    fn toggle_search_ui(&mut self) {
+        self.show_search_ui = !self.show_search_ui;
+        if !self.show_search_ui {
+            // Clear search when hiding the search UI
+            self.search_query.clear();
+            self.filtered_stories.clear();
+        } else {
+            // Focus the search field when showing it
+            self.needs_repaint = true;
+        }
+    }
+    
+    // Apply the search filter to stories
+    fn apply_search_filter(&mut self) {
+        if self.search_query.is_empty() {
+            // If search query is empty, clear filtered results
+            self.filtered_stories.clear();
+            return;
+        }
+        
+        // Convert search query to lowercase for case-insensitive search
+        let query = self.search_query.to_lowercase();
+        
+        // Filter stories based on search query
+        self.filtered_stories = self.stories.iter()
+            .filter(|story| {
+                // Search in title, domain, and author
+                story.title.to_lowercase().contains(&query) || 
+                story.domain.to_lowercase().contains(&query) || 
+                story.by.to_lowercase().contains(&query)
+            })
+            .cloned()
+            .collect();
     }
 }
 
@@ -1091,6 +1147,54 @@ impl eframe::App for HackerNewsReaderApp {
                 
                 // Push buttons to the right
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Search button
+                    let search_icon = "🔍"; // Magnifying glass icon
+                    let search_btn = ui.add(
+                        egui::Button::new(
+                            RichText::new(search_icon)
+                                .color(if self.show_search_ui { self.theme.highlight } else { self.theme.button_foreground })
+                                .size(18.0)
+                        )
+                        .min_size(egui::Vec2::new(32.0, 32.0))
+                        .corner_radius(CornerRadius::same(16)) // Make it circular
+                        .fill(self.theme.button_background)
+                    );
+                    
+                    if search_btn.clicked() {
+                        self.toggle_search_ui();
+                    }
+                    
+                    if search_btn.hovered() {
+                        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                        
+                        // Show search tooltip
+                        let tooltip_pos = egui::pos2(
+                            search_btn.rect.left() - 80.0,
+                            search_btn.rect.bottom() + 5.0
+                        );
+                        
+                        egui::Area::new(egui::Id::new("search_tooltip_area"))
+                            .order(egui::Order::Tooltip)
+                            .fixed_pos(tooltip_pos)
+                            .show(ctx, |ui| {
+                                egui::Frame::popup(ui.style())
+                                    .fill(self.theme.card_background)
+                                    .stroke(Stroke::new(1.0, self.theme.separator))
+                                    .corner_radius(CornerRadius::same(6))
+                                    .show(ui, |ui| {
+                                        ui.add(egui::Label::new(
+                                            if self.show_search_ui {
+                                                "Hide Search"
+                                            } else {
+                                                "Show Search"
+                                            }
+                                        ));
+                                    });
+                            });
+                    }
+                    
+                    ui.add_space(12.0);
+                    
                     // Theme toggle button
                     let theme_icon = if self.is_dark_mode { "☀" } else { "☾" }; // Sun for light mode, moon for dark mode
                     let theme_btn = ui.add(
@@ -1247,6 +1351,84 @@ impl eframe::App for HackerNewsReaderApp {
             });
             
             ui.add(egui::Separator::default().spacing(12.0));
+            
+            // Show search field when search UI is enabled
+            if self.show_search_ui {
+                // Search UI
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Search:").color(self.theme.text).size(16.0));
+                    ui.add_space(8.0);
+                    
+                    // Text field for search query
+                    let text_edit = ui.add_sized(
+                        [ui.available_width() - 80.0, 32.0],
+                        egui::TextEdit::singleline(&mut self.search_query)
+                            .hint_text("Enter keywords to filter stories...")
+                            .text_color(self.theme.text)
+                            .cursor_at_end(true)
+                            .frame(true)
+                            .id(egui::Id::new("search_input")) // Add ID for focus detection
+                    );
+                    
+                    // Focus the text edit on first frame
+                    if text_edit.gained_focus() {
+                        self.needs_repaint = true;
+                    }
+                    
+                    // Apply search filter when text changes
+                    if text_edit.changed() {
+                        self.apply_search_filter();
+                    }
+                    
+                    // Clear button
+                    if !self.search_query.is_empty() {
+                        ui.add_space(8.0);
+                        let clear_btn = ui.add_sized(
+                            [60.0, 28.0],
+                            egui::Button::new(
+                                RichText::new("Clear")
+                                    .color(self.theme.button_foreground)
+                                    .size(14.0)
+                            )
+                            .fill(self.theme.button_background)
+                        );
+                        
+                        if clear_btn.clicked() {
+                            self.search_query.clear();
+                            self.filtered_stories.clear();
+                        }
+                    }
+                });
+                
+                // Display search results summary if there's a search query
+                if !self.search_query.is_empty() {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        let results_count = self.filtered_stories.len();
+                        let total_count = self.stories.len();
+                        
+                        ui.label(
+                            RichText::new(format!("Found {} results from {} stories", results_count, total_count))
+                                .color(self.theme.secondary_text)
+                                .size(14.0)
+                                .italics()
+                        );
+                        
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            // Keyboard hint
+                            ui.label(
+                                RichText::new("Press ESC to close search")
+                                    .color(self.theme.secondary_text)
+                                    .size(13.0)
+                                    .italics()
+                            );
+                        });
+                    });
+                }
+                
+                ui.add_space(8.0);
+                ui.add(egui::Separator::default().spacing(8.0));
+            }
             
             // Loading indicator with a more modern spinner
             if self.loading {
@@ -1827,8 +2009,59 @@ impl HackerNewsReaderApp {
                 i.key_pressed(egui::Key::PageUp),       // Page Up - Scroll up a page
                 i.key_pressed(egui::Key::PageDown),     // Page Down - Scroll down a page
                 i.key_pressed(egui::Key::Backspace),    // Backspace - Go back to stories view
+                i.key_pressed(egui::Key::Escape),       // Escape - Close search UI
+                i.key_pressed(egui::Key::F),            // F - Show/hide search UI (with Control)
+                i.modifiers.ctrl,                       // Control modifier for various actions
+                i.key_pressed(egui::Key::Num1),         // Number keys for tab switching
+                i.key_pressed(egui::Key::Num2),
+                i.key_pressed(egui::Key::Num3),
+                i.key_pressed(egui::Key::Num4),
+                i.key_pressed(egui::Key::Num5),
+                i.key_pressed(egui::Key::Num6),
             )
         });
+        
+        // Handle search UI keyboard shortcuts (highest priority)
+        // Ctrl+F to show search UI
+        if input.13 && input.14 && !self.show_search_ui {
+            self.toggle_search_ui();
+            self.needs_repaint = true;
+            return;
+        }
+        
+        // ESC to close search UI
+        if input.12 && self.show_search_ui {
+            self.toggle_search_ui();
+            self.needs_repaint = true;
+            return;
+        }
+        
+        // Don't process number key shortcuts if we have input focus in search
+        let has_text_focus = ctx.memory(|m| m.has_focus(egui::Id::new("search_input")));
+        
+        // Handle tab switching with number keys (1-6) if not in a story view and not in search
+        if !has_text_focus && self.selected_story.is_none() {
+            // Tab switching
+            if input.15 {
+                self.switch_tab(Tab::Hot);
+                return;
+            } else if input.16 {
+                self.switch_tab(Tab::New);
+                return;
+            } else if input.17 {
+                self.switch_tab(Tab::Show);
+                return;
+            } else if input.18 {
+                self.switch_tab(Tab::Ask);
+                return;
+            } else if input.19 {
+                self.switch_tab(Tab::Jobs);
+                return;
+            } else if input.20 {
+                self.switch_tab(Tab::Best);
+                return;
+            }
+        }
         
         // Different keyboard handling based on current view
         if let Some(_) = &self.selected_story {
@@ -2050,13 +2283,37 @@ impl HackerNewsReaderApp {
         let ctx = ui.ctx().clone(); // Get context from UI
         let mut story_to_view = None;
         
-        // Clone stories to avoid borrow issues
-        let stories_clone = self.stories.clone();
+        // Use filtered stories if there's a search query, otherwise use all stories
+        let stories_to_display = if !self.search_query.is_empty() && !self.filtered_stories.is_empty() {
+            self.filtered_stories.clone()
+        } else {
+            self.stories.clone()
+        };
+        
+        // If search is active but no results found, show a message
+        if !self.search_query.is_empty() && self.filtered_stories.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(20.0);
+                ui.label(
+                    RichText::new(format!("No results found for '{}'", self.search_query))
+                        .color(self.theme.secondary_text)
+                        .size(18.0)
+                        .italics()
+                );
+                ui.add_space(8.0);
+                let try_again_text = RichText::new("Try different keywords or clear search.")
+                    .color(self.theme.secondary_text)
+                    .size(16.0);
+                ui.label(try_again_text);
+                ui.add_space(20.0);
+            });
+            return;
+        }
         
         // Calculate proper starting rank for display (always start from 1)
         let mut current_rank = 1;
         
-        for (_i, story) in stories_clone.iter().enumerate() {
+        for (_i, story) in stories_to_display.iter().enumerate() {
             // Get card background based on score using our helper method
             let card_background = self.theme.get_card_background(story.score);
             

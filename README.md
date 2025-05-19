@@ -14,6 +14,7 @@ A native desktop application for browsing Hacker News with a clean, modern inter
   - Jobs
   - Best Stories
 - View comments in a threaded, Reddit-like format
+- Search and filter stories by title, domain, or author
 - Automatically loads more content when scrolling to the bottom
 - Color-coded stories based on score
 - Dark and light mode support
@@ -70,6 +71,9 @@ The compiled binary will be available at `target/release/hacker_news_reader`.
 - **Backspace**: Return to the story list from the comments view.
 - **C**: When viewing comments, collapse all top-level comments.
 - **Shift+C**: When viewing comments, expand all comments.
+- **Ctrl+F**: Show search interface to filter stories.
+- **Escape**: Close search interface.
+- **1-6 Number Keys**: Switch between tabs (1=Hot, 2=New, 3=Show, 4=Ask, 5=Jobs, 6=Best).
 
 ### Story List
 
