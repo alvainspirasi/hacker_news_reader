@@ -19,7 +19,7 @@ A native desktop application for browsing Hacker News with a clean, modern inter
   - Ask HN
   - Jobs
   - Best Stories
-- View comments in a threaded, Reddit-like format with auto-folding
+- View comments in a threaded, Reddit-like format with auto-folding and adjustable font size
 - Search and filter stories by title, domain, or author
 - Automatically loads more content when scrolling to the bottom
 - Color-coded stories based on score
@@ -77,6 +77,8 @@ The compiled binary will be available at `target/release/hacker_news_reader`.
 - **Backspace**: Return to the story list from the comments view.
 - **C**: When viewing comments, collapse all top-level comments.
 - **Shift+C**: When viewing comments, expand all comments.
+- **+ (Plus)**: Increase comment font size when in comments view.
+- **- (Minus)**: Decrease comment font size when in comments view.
 - **Ctrl+F**: Show search interface to filter stories.
 - **Escape**: Close search interface.
 - **1-6 Number Keys**: Switch between tabs (1=Hot, 2=New, 3=Show, 4=Ask, 5=Jobs, 6=Best).
@@ -99,6 +101,7 @@ The comments view shows a threaded display of comments. Features include:
 
 - Auto-folding of comments when first loaded for better overview
 - Collapsible comment threads
+- Adjustable font size with + and - keys or buttons
 - Author highlighting
 - Nested replies
 - Comment age display

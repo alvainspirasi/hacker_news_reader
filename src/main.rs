@@ -453,6 +453,8 @@ struct HackerNewsReaderApp {
     auto_collapse_on_load: bool,
     // Cache for cleaned HTML to improve performance with large comment threads
     clean_html_cache: std::collections::HashMap<String, String>,
+    // Font size for comments
+    comment_font_size: f32,
 }
 
 impl HackerNewsReaderApp {
@@ -542,6 +544,8 @@ impl HackerNewsReaderApp {
             auto_collapse_on_load: true,
             // Initialize HTML cleaning cache
             clean_html_cache: std::collections::HashMap::new(),
+            // Initialize comment font size with default value
+            comment_font_size: 15.0,
         }
     }
     
@@ -947,6 +951,26 @@ impl HackerNewsReaderApp {
         } else {
             AppTheme::light()
         };
+        self.needs_repaint = true;
+    }
+    
+    // Increase comment font size
+    fn increase_comment_font_size(&mut self) {
+        // Maximum font size to prevent UI issues
+        const MAX_FONT_SIZE: f32 = 24.0;
+        
+        // Increase by 1 point
+        self.comment_font_size = (self.comment_font_size + 1.0).min(MAX_FONT_SIZE);
+        self.needs_repaint = true;
+    }
+    
+    // Decrease comment font size
+    fn decrease_comment_font_size(&mut self) {
+        // Minimum font size for readability
+        const MIN_FONT_SIZE: f32 = 10.0;
+        
+        // Decrease by 1 point
+        self.comment_font_size = (self.comment_font_size - 1.0).max(MIN_FONT_SIZE);
         self.needs_repaint = true;
     }
     
@@ -2083,6 +2107,8 @@ impl HackerNewsReaderApp {
                 i.key_pressed(egui::Key::Num4),
                 i.key_pressed(egui::Key::Num5),
                 i.key_pressed(egui::Key::Num6),
+                i.key_pressed(egui::Key::PlusEquals),   // Plus key - Increase font size
+                i.key_pressed(egui::Key::Minus),        // Minus key - Decrease font size
             )
         });
         
@@ -2128,8 +2154,21 @@ impl HackerNewsReaderApp {
             }
         }
         
-        // Different keyboard handling based on current view
+        // Handle font size adjustment in comments view
         if let Some(_) = &self.selected_story {
+            // Plus key to increase font size
+            if input.20 {
+                self.increase_comment_font_size();
+                return;
+            }
+            
+            // Minus key to decrease font size
+            if input.21 {
+                self.decrease_comment_font_size();
+                return;
+            }
+            
+            // Continue with other comment view shortcuts
             // Check for backspace key to return to story list (highest priority)
             if input.11 { // Backspace key
                 self.selected_story = None;
@@ -2675,6 +2714,63 @@ impl HackerNewsReaderApp {
         let (current_page, total_pages, total_comments) = self.get_pagination_info();
         
         ui.horizontal(|ui| {
+            // Font size controls
+            ui.horizontal(|ui| {
+                // Text size label
+                ui.label(
+                    RichText::new("Font Size:")
+                        .color(self.theme.secondary_text)
+                        .size(14.0)
+                );
+                
+                // Decrease button
+                let decrease_btn = ui.add(
+                    egui::Button::new(
+                        RichText::new("A-")
+                            .color(self.theme.button_foreground)
+                            .size(14.0)
+                    )
+                    .min_size(egui::Vec2::new(28.0, 28.0))
+                    .corner_radius(CornerRadius::same(4))
+                    .fill(self.theme.button_background)
+                );
+                
+                if decrease_btn.clicked() {
+                    let this = self as *const _ as *mut Self;
+                    unsafe {
+                        (*this).decrease_comment_font_size();
+                    }
+                }
+                
+                // Show current size
+                ui.label(
+                    RichText::new(format!("{:.0}pt", self.comment_font_size))
+                        .color(self.theme.text)
+                        .size(14.0)
+                );
+                
+                // Increase button
+                let increase_btn = ui.add(
+                    egui::Button::new(
+                        RichText::new("A+")
+                            .color(self.theme.button_foreground)
+                            .size(14.0)
+                    )
+                    .min_size(egui::Vec2::new(28.0, 28.0))
+                    .corner_radius(CornerRadius::same(4))
+                    .fill(self.theme.button_background)
+                );
+                
+                if increase_btn.clicked() {
+                    let this = self as *const _ as *mut Self;
+                    unsafe {
+                        (*this).increase_comment_font_size();
+                    }
+                }
+            });
+            
+            ui.add_space(12.0); // Add spacing before pagination info
+            
             ui.label(
                 RichText::new(format!("Showing page {} of {} ({} comments total)", 
                     current_page + 1, total_pages, total_comments))
@@ -2908,7 +3004,7 @@ impl HackerNewsReaderApp {
                             ui.label(
                                 RichText::new(&clean_text)
                                     .color(self.theme.text)
-                                    .size(15.0)
+                                    .size(self.comment_font_size) // Use the configurable font size
                             );
                             
                             // Recursively render child comments (only if not collapsed)
