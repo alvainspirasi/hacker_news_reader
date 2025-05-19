@@ -187,6 +187,129 @@ impl AppTheme {
             self.score_low
         }
     }
+    
+    // Get a color for story titles based on score, but with better readability
+    fn get_title_color(&self, score: i32) -> Color32 {
+        // For light theme, we need to ensure titles are dark enough to read
+        // For dark theme, we need to ensure titles are bright enough
+        if self.is_dark_mode {
+            // In dark mode, brighten the colors a bit for better readability
+            if score >= 500 {
+                // Very high scores - brighter high score color
+                Color32::from_rgb(
+                    self.score_high.r().saturating_add(30),
+                    self.score_high.g().saturating_add(30),
+                    self.score_high.b().saturating_add(10)
+                )
+            } else if score >= 300 {
+                // High scores - use high score color
+                self.score_high
+            } else if score >= 100 {
+                // Medium scores - use medium score color
+                self.score_medium
+            } else {
+                // Default color is brighter than secondary text
+                self.text
+            }
+        } else {
+            // In light mode, darken the colors a bit for better readability
+            if score >= 500 {
+                // Very high scores - darker high score color for contrast
+                Color32::from_rgb(
+                    self.score_high.r().saturating_sub(30),
+                    self.score_high.g().saturating_sub(30),
+                    self.score_high.b().saturating_sub(10)
+                )
+            } else if score >= 300 {
+                // High scores - use high score color
+                self.score_high
+            } else if score >= 100 {
+                // Medium scores - use medium score color
+                self.score_medium
+            } else {
+                // Low scores - use normal text color for readability
+                self.text
+            }
+        }
+    }
+    
+    // Helper function to get the background color for story cards based on score
+    fn get_card_background(&self, score: i32) -> Color32 {
+        if score >= 500 {
+            // Very high score - custom highlight
+            if self.is_dark_mode {
+                // Subtle green tint in dark mode
+                Color32::from_rgba_premultiplied(
+                    40, 70, 40, 255
+                )
+            } else {
+                // Very subtle green tint in light mode
+                Color32::from_rgba_premultiplied(
+                    240, 250, 240, 255
+                )
+            }
+        } else if score >= 300 {
+            // High score - slight highlight
+            if self.is_dark_mode {
+                // Slightly lighter background in dark mode
+                Color32::from_rgba_premultiplied(
+                    self.theme.card_background.r().saturating_add(10),
+                    self.theme.card_background.g().saturating_add(10),
+                    self.theme.card_background.b().saturating_add(5),
+                    255
+                )
+            } else {
+                // Slightly darker background in light mode for subtle emphasis
+                Color32::from_rgba_premultiplied(
+                    self.theme.card_background.r().saturating_sub(5),
+                    self.theme.card_background.g().saturating_sub(5),
+                    self.theme.card_background.b().saturating_sub(5),
+                    255
+                )
+            }
+        } else {
+            // Regular score - normal background
+            self.theme.card_background
+        }
+    }
+    
+    // Helper function to get the border stroke for story cards based on score
+    fn get_card_stroke(&self, score: i32) -> Stroke {
+        if score >= 500 {
+            // Very high score - custom highlight border
+            let color = if self.is_dark_mode {
+                // Brighter green border in dark mode
+                Color32::from_rgb(76, 175, 80) // Match score_high
+            } else {
+                // Darker green border in light mode
+                Color32::from_rgb(46, 125, 50) // Darker green
+            };
+            Stroke::new(2.0, color)
+        } else if score >= 300 {
+            // High score - slight border highlight
+            let color = if self.is_dark_mode {
+                // Slightly brighter border in dark mode
+                Color32::from_rgba_premultiplied(
+                    self.theme.separator.r().saturating_add(20),
+                    self.theme.separator.g().saturating_add(20),
+                    self.theme.separator.b().saturating_add(10),
+                    255
+                )
+            } else {
+                // Slightly darker border in light mode
+                Color32::from_rgba_premultiplied(
+                    self.theme.separator.r().saturating_sub(10),
+                    self.theme.separator.g().saturating_sub(10),
+                    self.theme.separator.b().saturating_sub(10),
+                    255
+                )
+            };
+            Stroke::new(1.5, color)
+        } else {
+            // Regular score - normal border
+            Stroke::new(1.0, self.theme.separator)
+        }
+    }
 }
 
 // Define an enum for the different tabs
@@ -801,21 +924,28 @@ impl eframe::App for HackerNewsReaderApp {
             }
 
             if let Some(story) = &self.selected_story {
-                // Story title
+                // Story title with color based on score
                 ui.add_space(8.0);
+                let title_color = self.get_title_color(story.score);
                 ui.label(
                     RichText::new(&story.title)
                         .size(22.0)
-                        .color(self.theme.text)
+                        .color(title_color)
                         .strong()
                 );
                 ui.add_space(8.0);
                 
-                // Story details card
+                // Get card background based on score using our helper method
+                let card_background = self.get_card_background(story.score);
+                
+                // Get the appropriate border stroke based on score
+                let card_stroke = self.get_card_stroke(story.score);
+                
+                // Story details card with background and border based on score
                 egui::Frame::new()
-                    .fill(self.theme.card_background)
+                    .fill(card_background)
                     .corner_radius(CornerRadius::same(8))
-                    .stroke(Stroke::new(1.0, self.theme.separator))
+                    .stroke(card_stroke)
                     .inner_margin(12.0)
                     .show(ui, |ui| {
                         // Top row with score and domain
@@ -1147,11 +1277,17 @@ impl HackerNewsReaderApp {
         let mut story_to_view = None;
         
         for (i, story) in self.stories.iter().enumerate() {
-            // Create a card for each story
+            // Get card background based on score using our helper method
+            let card_background = self.get_card_background(story.score);
+            
+            // Get the appropriate border stroke based on score
+            let card_stroke = self.get_card_stroke(story.score);
+            
+            // Create a card for each story with background and border based on score
             egui::Frame::new()
-                .fill(self.theme.card_background)
+                .fill(card_background)
                 .corner_radius(CornerRadius::same(8))
-                .stroke(Stroke::new(1.0, self.theme.separator))
+                .stroke(card_stroke)
                 .inner_margin(12.0)
                 .outer_margin(egui::vec2(8.0, 6.0))
                 .show(ui, |ui| {
@@ -1165,11 +1301,12 @@ impl HackerNewsReaderApp {
                         );
                         ui.add_space(8.0);
                         
-                        // Story title with clickable behavior
+                        // Story title with clickable behavior and color highlighting based on score
+                        let score_color = self.get_title_color(story.score);
                         let title_label = ui.add(
                             egui::Label::new(
                                 RichText::new(&story.title)
-                                    .color(self.theme.text)
+                                    .color(score_color)
                                     .size(16.0)
                                     .strong()
                             ).sense(egui::Sense::click())
