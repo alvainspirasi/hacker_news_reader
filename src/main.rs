@@ -2107,7 +2107,7 @@ impl HackerNewsReaderApp {
                 i.key_pressed(egui::Key::Num4),
                 i.key_pressed(egui::Key::Num5),
                 i.key_pressed(egui::Key::Num6),
-                i.key_pressed(egui::Key::PlusEquals),   // Plus key - Increase font size
+                i.key_pressed(egui::Key::Plus),   // Plus key - Increase font size
                 i.key_pressed(egui::Key::Minus),        // Minus key - Decrease font size
             )
         });
