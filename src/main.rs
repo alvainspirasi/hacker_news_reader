@@ -1781,20 +1781,20 @@ impl eframe::App for HackerNewsReaderApp {
                 let available_height = ui.available_height();
                 
                 // Calculate estimated heights
-                const COMMENT_HEADER_HEIGHT: f32 = 40.0; // Estimated height of comment header
-                const COMMENT_MARGIN: f32 = 20.0; // Total margin around comments
+                // Note: These constants are used in height calculation logic, 
+                // now handled directly in estimate_comment_height()
                 
                 // Get comments for the current page only
                 let page_comments = self.get_current_page_comments();
                 
                 // Create height estimates for each comment (including children if expanded)
                 let mut comment_heights: Vec<f32> = Vec::new();
-                let mut total_height: f32 = 0.0;
+                let mut _total_height: f32 = 0.0; // Prefixed with _ to indicate intentionally unused
                 
                 for comment in &page_comments {
                     let height = self.estimate_comment_height(comment, 0);
                     comment_heights.push(height);
-                    total_height += height;
+                    _total_height += height; // Track total height for future scroll area sizing
                 }
                 
                 let scroll_response = ScrollArea::vertical()
