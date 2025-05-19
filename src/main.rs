@@ -12,6 +12,9 @@ use crate::hn_client::HackerNewsClient;
 use crate::models::{HackerNewsItem, HackerNewsComment};
 use crate::db::{Database, FavoriteStory};
 
+// Create a global font size
+static mut GLOBAL_FONT_SIZE: f32 = 15.0;
+
 // Function to load an image as an icon
 fn load_icon(path: &str) -> Result<egui::IconData, Box<dyn std::error::Error>> {
     // Open the image file
@@ -74,6 +77,16 @@ fn main() -> Result<(), eframe::Error> {
                         } else {
                             AppTheme::light()
                         };
+                    }
+                }
+                
+                // Try to load saved font size preference
+                if let Some(font_size_str) = storage.get_string("comment_font_size") {
+                    if let Ok(font_size) = font_size_str.parse::<f32>() {
+                        // Set the global font size within valid range (10.0-24.0)
+                        unsafe {
+                            GLOBAL_FONT_SIZE = font_size.max(10.0).min(24.0);
+                        }
                     }
                 }
             }
@@ -453,8 +466,8 @@ struct HackerNewsReaderApp {
     auto_collapse_on_load: bool,
     // Cache for cleaned HTML to improve performance with large comment threads
     clean_html_cache: std::collections::HashMap<String, String>,
-    // Font size for comments
-    comment_font_size: f32,
+    // We'll remove the comment_font_size field from the struct
+    // and use the global GLOBAL_FONT_SIZE instead
 }
 
 impl HackerNewsReaderApp {
@@ -544,8 +557,7 @@ impl HackerNewsReaderApp {
             auto_collapse_on_load: true,
             // Initialize HTML cleaning cache
             clean_html_cache: std::collections::HashMap::new(),
-            // Initialize comment font size with default value
-            comment_font_size: 15.0,
+            // comment_font_size removed - using global value
         }
     }
     
@@ -959,8 +971,11 @@ impl HackerNewsReaderApp {
         // Maximum font size to prevent UI issues
         const MAX_FONT_SIZE: f32 = 24.0;
         
-        // Increase by 1 point
-        self.comment_font_size = (self.comment_font_size + 1.0).min(MAX_FONT_SIZE);
+        unsafe {
+            // Increase by 1 point (use the global value)
+            GLOBAL_FONT_SIZE = (GLOBAL_FONT_SIZE + 1.0).min(MAX_FONT_SIZE);
+        }
+        
         self.needs_repaint = true;
     }
     
@@ -969,8 +984,11 @@ impl HackerNewsReaderApp {
         // Minimum font size for readability
         const MIN_FONT_SIZE: f32 = 10.0;
         
-        // Decrease by 1 point
-        self.comment_font_size = (self.comment_font_size - 1.0).max(MIN_FONT_SIZE);
+        unsafe {
+            // Decrease by 1 point (use the global value)
+            GLOBAL_FONT_SIZE = (GLOBAL_FONT_SIZE - 1.0).max(MIN_FONT_SIZE);
+        }
+        
         self.needs_repaint = true;
     }
     
@@ -1055,6 +1073,11 @@ impl eframe::App for HackerNewsReaderApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         // Save theme preference
         storage.set_string("is_dark_mode", self.is_dark_mode.to_string());
+        
+        // Save font size preference from global value
+        unsafe {
+            storage.set_string("comment_font_size", GLOBAL_FONT_SIZE.to_string());
+        }
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1121,6 +1144,8 @@ impl eframe::App for HackerNewsReaderApp {
             
             self.needs_repaint = true;
         }
+        
+        // Removed debug code and runtime storage saving
         
         // Request repaint if needed
         if self.needs_repaint {
@@ -2710,7 +2735,7 @@ impl HackerNewsReaderApp {
     }
     
     // Render pagination controls
-    fn render_pagination_controls(&self, ui: &mut Ui) {
+    fn render_pagination_controls(&mut self, ui: &mut Ui) {
         let (current_page, total_pages, total_comments) = self.get_pagination_info();
         
         ui.horizontal(|ui| {
@@ -2722,6 +2747,24 @@ impl HackerNewsReaderApp {
                         .color(self.theme.secondary_text)
                         .size(14.0)
                 );
+                
+                // Add a slider for direct font size control
+                unsafe {
+                    let mut font_size = GLOBAL_FONT_SIZE;
+                    let slider = ui.add(egui::Slider::new(&mut font_size, 10.0..=24.0)
+                        .step_by(1.0)
+                        .text("pt"));
+                    
+                    if slider.changed() {
+                        // Update the global font size directly
+                        GLOBAL_FONT_SIZE = font_size;
+                    }
+                }
+                
+                // Check if we need to repaint - done outside the closure
+                self.needs_repaint = true;
+                
+                ui.add_space(10.0);
                 
                 // Decrease button
                 let decrease_btn = ui.add(
@@ -2736,18 +2779,21 @@ impl HackerNewsReaderApp {
                 );
                 
                 if decrease_btn.clicked() {
-                    let this = self as *const _ as *mut Self;
-                    unsafe {
-                        (*this).decrease_comment_font_size();
-                    }
+                    // Call the decrease method which updates the global value
+                    self.decrease_comment_font_size();
+                    
+                    // Force a repaint immediately
+                    ui.ctx().request_repaint();
                 }
                 
                 // Show current size
-                ui.label(
-                    RichText::new(format!("{:.0}pt", self.comment_font_size))
-                        .color(self.theme.text)
-                        .size(14.0)
-                );
+                unsafe {
+                    ui.label(
+                        RichText::new(format!("{:.0}pt", GLOBAL_FONT_SIZE))
+                            .color(self.theme.text)
+                            .size(14.0)
+                    );
+                }
                 
                 // Increase button
                 let increase_btn = ui.add(
@@ -2762,10 +2808,11 @@ impl HackerNewsReaderApp {
                 );
                 
                 if increase_btn.clicked() {
-                    let this = self as *const _ as *mut Self;
-                    unsafe {
-                        (*this).increase_comment_font_size();
-                    }
+                    // Call the increase method which updates the global value
+                    self.increase_comment_font_size();
+                    
+                    // Force a repaint immediately
+                    ui.ctx().request_repaint();
                 }
             });
             
@@ -3001,11 +3048,16 @@ impl HackerNewsReaderApp {
                             
                             // Comment text with cleaned HTML
                             let clean_text = self.clean_html(&comment.text);
-                            ui.label(
-                                RichText::new(&clean_text)
-                                    .color(self.theme.text)
-                                    .size(self.comment_font_size) // Use the configurable font size
-                            );
+                            
+                            // Use the global font size
+                            unsafe {
+                                // Apply the font size to the comment text
+                                ui.label(
+                                    RichText::new(&clean_text)
+                                        .color(self.theme.text)
+                                        .size(GLOBAL_FONT_SIZE) // Use the global font size
+                                );
+                            }
                             
                             // Recursively render child comments (only if not collapsed)
                             if !comment.children.is_empty() {
