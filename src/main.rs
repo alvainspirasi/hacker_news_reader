@@ -1,21 +1,60 @@
 use eframe::egui;
 use egui::{Color32, RichText, ScrollArea, Ui, ViewportBuilder, Stroke, CornerRadius};
 use std::thread;
+use std::sync::Arc;
+use image::ImageReader;
 
 mod hn_client;
 mod models;
+mod db;
 
 use crate::hn_client::HackerNewsClient;
 use crate::models::{HackerNewsItem, HackerNewsComment};
+use crate::db::{Database, FavoriteStory};
+
+// Function to load an image as an icon
+fn load_icon(path: &str) -> Result<egui::IconData, Box<dyn std::error::Error>> {
+    // Open the image file
+    let img = ImageReader::open(path)?.decode()?;
+    
+    // Convert the image to RGBA format
+    let rgba_image = img.into_rgba8();
+    let (width, height) = rgba_image.dimensions();
+    
+    // Create IconData from the image
+    let icon_data = egui::IconData {
+        rgba: rgba_image.into_raw(),
+        width: width as u32,
+        height: height as u32,
+    };
+    
+    Ok(icon_data)
+}
 
 fn main() -> Result<(), eframe::Error> {
-    let options = eframe::NativeOptions {
+    // Load the icon image
+    let icon_data = match load_icon("logo/logo.png") {
+        Ok(icon) => Some(icon),
+        Err(e) => {
+            eprintln!("Failed to load icon: {}", e);
+            None
+        }
+    };
+    
+    // Create application options with the icon
+    let mut options = eframe::NativeOptions {
         viewport: ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
             .with_min_inner_size([800.0, 600.0])
             .with_title("Hacker News Reader"),
         ..Default::default()
     };
+    
+    // Set the icon if loaded successfully
+    if let Some(icon) = icon_data {
+        // Wrap the IconData in an Arc as required by eframe
+        options.viewport.icon = Some(Arc::new(icon));
+    }
     
     eframe::run_native(
         "Hacker News Reader",
@@ -179,7 +218,21 @@ impl AppTheme {
     }
     
     fn score_color(&self, score: i32) -> Color32 {
-        if score >= 300 {
+        // Determine if this is light or dark theme
+        let is_dark_mode = self.background.r() <= 128 || self.background.g() <= 128 || self.background.b() <= 128;
+        
+        if score >= 500 {
+            // Very high scores get an extra bright/saturated color
+            if is_dark_mode {
+                Color32::from_rgb(
+                    self.score_high.r().saturating_add(20),
+                    self.score_high.g().saturating_add(20),
+                    self.score_high.b().saturating_add(5)
+                )
+            } else {
+                Color32::from_rgb(15, 100, 30) // Darker, richer green for light mode
+            }
+        } else if score >= 300 {
             self.score_high
         } else if score >= 100 {
             self.score_medium
@@ -190,9 +243,12 @@ impl AppTheme {
     
     // Get a color for story titles based on score, but with better readability
     fn get_title_color(&self, score: i32) -> Color32 {
+        // Determine if this is light or dark theme by checking background brightness
+        let is_dark_mode = self.background.r() <= 128 || self.background.g() <= 128 || self.background.b() <= 128;
+        
         // For light theme, we need to ensure titles are dark enough to read
         // For dark theme, we need to ensure titles are bright enough
-        if self.is_dark_mode {
+        if is_dark_mode {
             // In dark mode, brighten the colors a bit for better readability
             if score >= 500 {
                 // Very high scores - brighter high score color
@@ -235,49 +291,67 @@ impl AppTheme {
     
     // Helper function to get the background color for story cards based on score
     fn get_card_background(&self, score: i32) -> Color32 {
+        // Determine if this is light or dark theme by checking background brightness
+        let is_dark_mode = self.background.r() <= 128 || self.background.g() <= 128 || self.background.b() <= 128;
+        
         if score >= 500 {
             // Very high score - custom highlight
-            if self.is_dark_mode {
+            if is_dark_mode {
                 // Subtle green tint in dark mode
-                Color32::from_rgba_premultiplied(
-                    40, 70, 40, 255
-                )
+                Color32::from_rgba_premultiplied(40, 70, 40, 255)
             } else {
                 // Very subtle green tint in light mode
-                Color32::from_rgba_premultiplied(
-                    240, 250, 240, 255
-                )
+                Color32::from_rgba_premultiplied(240, 250, 240, 255)
             }
         } else if score >= 300 {
-            // High score - slight highlight
-            if self.is_dark_mode {
-                // Slightly lighter background in dark mode
+            // High score - green highlight
+            if is_dark_mode {
+                // Slightly lighter background in dark mode with green tint
                 Color32::from_rgba_premultiplied(
-                    self.theme.card_background.r().saturating_add(10),
-                    self.theme.card_background.g().saturating_add(10),
-                    self.theme.card_background.b().saturating_add(5),
+                    self.card_background.r().saturating_add(5),
+                    self.card_background.g().saturating_add(15),
+                    self.card_background.b().saturating_add(5),
                     255
                 )
             } else {
-                // Slightly darker background in light mode for subtle emphasis
+                // Slightly darker background in light mode with green tint
                 Color32::from_rgba_premultiplied(
-                    self.theme.card_background.r().saturating_sub(5),
-                    self.theme.card_background.g().saturating_sub(5),
-                    self.theme.card_background.b().saturating_sub(5),
+                    self.card_background.r().saturating_sub(5),
+                    self.card_background.g().saturating_sub(0), // Less reduction for green channel
+                    self.card_background.b().saturating_sub(5),
                     255
+                )
+            }
+        } else if score >= 100 {
+            // Medium score - yellow/amber highlight
+            if is_dark_mode {
+                // Yellow/amber tint in dark mode
+                Color32::from_rgba_premultiplied(
+                    self.card_background.r().saturating_add(15),
+                    self.card_background.g().saturating_add(10),
+                    self.card_background.b().saturating_add(0),
+                    255
+                )
+            } else {
+                // Yellow/amber tint in light mode
+                Color32::from_rgba_premultiplied(
+                    253, 253, 235, 255 // Very subtle yellow tint
                 )
             }
         } else {
             // Regular score - normal background
-            self.theme.card_background
+            self.card_background
         }
     }
     
     // Helper function to get the border stroke for story cards based on score
     fn get_card_stroke(&self, score: i32) -> Stroke {
+        // Determine if this is light or dark theme by checking background brightness
+        let is_dark_mode = self.background.r() <= 128 || self.background.g() <= 128 || self.background.b() <= 128;
+        
         if score >= 500 {
             // Very high score - custom highlight border
-            let color = if self.is_dark_mode {
+            let color = if is_dark_mode {
                 // Brighter green border in dark mode
                 Color32::from_rgb(76, 175, 80) // Match score_high
             } else {
@@ -286,30 +360,41 @@ impl AppTheme {
             };
             Stroke::new(2.0, color)
         } else if score >= 300 {
-            // High score - slight border highlight
-            let color = if self.is_dark_mode {
-                // Slightly brighter border in dark mode
+            // High score - green border highlight
+            let color = if is_dark_mode {
+                // Green-tinted border in dark mode
                 Color32::from_rgba_premultiplied(
-                    self.theme.separator.r().saturating_add(20),
-                    self.theme.separator.g().saturating_add(20),
-                    self.theme.separator.b().saturating_add(10),
+                    self.separator.r().saturating_add(5),
+                    self.separator.g().saturating_add(30),
+                    self.separator.b().saturating_add(5),
                     255
                 )
             } else {
-                // Slightly darker border in light mode
-                Color32::from_rgba_premultiplied(
-                    self.theme.separator.r().saturating_sub(10),
-                    self.theme.separator.g().saturating_sub(10),
-                    self.theme.separator.b().saturating_sub(10),
-                    255
-                )
+                // Green-tinted border in light mode
+                Color32::from_rgb(70, 150, 70) // Medium green
             };
             Stroke::new(1.5, color)
+        } else if score >= 100 {
+            // Medium score - yellow/amber border highlight
+            let color = if is_dark_mode {
+                // Yellow/amber border in dark mode
+                Color32::from_rgba_premultiplied(
+                    self.separator.r().saturating_add(40),
+                    self.separator.g().saturating_add(35),
+                    self.separator.b().saturating_add(0),
+                    255
+                )
+            } else {
+                // Yellow/amber border in light mode
+                Color32::from_rgb(190, 150, 30) // Medium amber
+            };
+            Stroke::new(1.2, color)
         } else {
             // Regular score - normal border
-            Stroke::new(1.0, self.theme.separator)
+            Stroke::new(1.0, self.separator)
         }
     }
+    
 }
 
 // Define an enum for the different tabs
@@ -318,6 +403,9 @@ enum Tab {
     Hot,
     New,
     Show,
+    Ask,
+    Jobs,
+    Best,
 }
 
 struct HackerNewsReaderApp {
@@ -330,6 +418,12 @@ struct HackerNewsReaderApp {
     is_dark_mode: bool,
     // Current active tab
     current_tab: Tab,
+    // Current page for stories (for infinite scrolling)
+    current_page: usize,
+    // Flag to indicate if more stories are being loaded
+    loading_more_stories: bool, 
+    // Flag to indicate if we've reached the end of available stories
+    end_of_stories: bool,
     // Change the thread type to handle any type of result
     load_thread: Option<thread::JoinHandle<Box<dyn std::any::Any + Send>>>,
     needs_repaint: bool,
@@ -340,6 +434,17 @@ struct HackerNewsReaderApp {
     comments_page: usize,
     comments_per_page: usize,
     total_comments_count: usize,
+    // ScrollArea control
+    stories_scroll_offset: f32,
+    comments_scroll_offset: f32,
+    // Favorites
+    database: Arc<Database>,
+    favorites: Vec<FavoriteStory>,
+    show_favorites_panel: bool,
+    favorites_loading: bool,
+    favorites_scroll_offset: f32,
+    // Pending actions to avoid borrow checker issues
+    pending_favorites_toggle: Option<String>,  // Story ID to toggle
 }
 
 impl HackerNewsReaderApp {
@@ -355,6 +460,7 @@ impl HackerNewsReaderApp {
                 score: 123,
                 time_ago: "2 hours ago".to_string(),
                 comments_count: 45,
+                original_index: 0,
             },
             crate::models::HackerNewsItem {
                 id: "debug2".to_string(),
@@ -365,8 +471,28 @@ impl HackerNewsReaderApp {
                 score: 234,
                 time_ago: "3 hours ago".to_string(),
                 comments_count: 67,
+                original_index: 1,
             },
         ];
+        
+        // Initialize the database
+        let database = match Database::new() {
+            Ok(db) => Arc::new(db),
+            Err(e) => {
+                eprintln!("Failed to initialize database: {}", e);
+                // Create a placeholder database - we'll still function without favorites
+                Arc::new(Database::new().unwrap_or_else(|_| panic!("Failed to create placeholder database")))
+            }
+        };
+        
+        // Load initial favorites
+        let favorites = match database.get_all_favorites() {
+            Ok(favs) => favs,
+            Err(e) => {
+                eprintln!("Failed to load favorites: {}", e);
+                Vec::new()
+            }
+        };
         
         Self {
             hn_client: HackerNewsClient::new(),
@@ -378,6 +504,9 @@ impl HackerNewsReaderApp {
             theme: AppTheme::dark(),
             is_dark_mode: true,
             current_tab: Tab::Hot, // Start with the Hot tab
+            current_page: 1, // Start with page 1
+            loading_more_stories: false,
+            end_of_stories: false,
             load_thread: None,
             needs_repaint: false,
             collapsed_comments: std::collections::HashSet::new(),
@@ -387,6 +516,16 @@ impl HackerNewsReaderApp {
             comments_page: 0,
             comments_per_page: 20, // Display 20 top-level comments per page
             total_comments_count: 0,
+            // Initialize scroll offsets
+            stories_scroll_offset: 0.0,
+            comments_scroll_offset: 0.0,
+            // Initialize favorites
+            database,
+            favorites,
+            show_favorites_panel: false,
+            favorites_loading: false,
+            favorites_scroll_offset: 0.0,
+            pending_favorites_toggle: None,
         }
     }
     
@@ -396,6 +535,8 @@ impl HackerNewsReaderApp {
         }
         
         self.loading = true;
+        self.current_page = 1; // Reset to page 1 when loading fresh stories
+        self.end_of_stories = false; // Reset end of stories flag
         
         // Create a new thread for loading
         let client = self.hn_client.clone();
@@ -406,10 +547,80 @@ impl HackerNewsReaderApp {
             Tab::Hot => "hot",
             Tab::New => "new",
             Tab::Show => "show",
+            Tab::Ask => "ask",
+            Tab::Jobs => "jobs",
+            Tab::Best => "best",
         };
         
         let handle = thread::spawn(move || {
             let result: Box<dyn std::any::Any + Send> = match client.fetch_stories_by_tab(tab_str) {
+                Ok(stories) => {
+                    let _ = tx.send(Some(stories));
+                    Box::new(())
+                }
+                Err(_) => {
+                    let _ = tx.send(None::<Vec<HackerNewsItem>>);
+                    Box::new(())
+                }
+            };
+            result
+        });
+        
+        self.load_thread = Some(handle);
+        
+        // Store the receiver for later checks
+        self.stories_receiver = Some(rx);
+    }
+    
+    fn load_more_stories(&mut self) {
+        // Debug output turned off
+        // println!("load_more_stories called with: loading={}, loading_more={}, end_reached={}, current_page={}", 
+        //          self.loading, self.loading_more_stories, self.end_of_stories, self.current_page);
+                 
+        // Don't start another load if:
+        // 1. We're already loading
+        // 2. We've reached the end of stories
+        // 3. We've reached the maximum page limit (5 pages = 150 stories)
+        if self.loading || self.loading_more_stories || self.end_of_stories {
+            // Debug output turned off
+            // println!("  → ABORT: Already loading or reached end of stories");
+            return;
+        }
+        
+        // Check if we've reached the maximum number of pages (5 pages = 150 stories)
+        const MAX_PAGES: usize = 5;
+        if self.current_page >= MAX_PAGES {
+            // Debug output turned off
+            // println!("  → ABORT: Reached maximum page limit ({} pages)", MAX_PAGES);
+            self.end_of_stories = true;
+            return;
+        }
+        
+        // Increment the page number
+        self.current_page += 1;
+        self.loading_more_stories = true;
+        
+        // Debug output turned off
+        // println!("STARTING TO LOAD MORE STORIES (PAGE {}/{}) - loading_more_stories set to true", 
+        //          self.current_page, MAX_PAGES);
+        
+        // Create a new thread for loading more stories
+        let client = self.hn_client.clone();
+        let page = self.current_page;
+        let (tx, rx) = std::sync::mpsc::channel();
+        
+        // Convert the tab enum to a string
+        let tab_str = match self.current_tab {
+            Tab::Hot => "hot",
+            Tab::New => "new",
+            Tab::Show => "show",
+            Tab::Ask => "ask",
+            Tab::Jobs => "jobs",
+            Tab::Best => "best",
+        };
+        
+        let handle = thread::spawn(move || {
+            let result: Box<dyn std::any::Any + Send> = match client.fetch_stories_by_tab_and_page(tab_str, page) {
                 Ok(stories) => {
                     let _ = tx.send(Some(stories));
                     Box::new(())
@@ -433,26 +644,107 @@ impl HackerNewsReaderApp {
         if let Some(rx) = &self.stories_receiver {
             match rx.try_recv() {
                 Ok(Some(stories)) => {
-                    self.stories = stories;
+                    // Debug output turned off
+                    // println!("RECEIVED {} STORIES FROM LOADING THREAD", stories.len());
+                    
+                    if self.loading_more_stories {
+                        // Debug output turned off
+                        // println!("Processing as additional stories (current_page={})", self.current_page);
+                        
+                        let _current_count = self.stories.len();
+                        
+                        // If we're loading more stories, append them to the existing list regardless of count
+                        // We'll set end_of_stories only if we get zero stories
+                        if stories.is_empty() {
+                            // Only mark as end of stories if we get zero stories
+                            // Debug output turned off
+                            // println!("REACHED END OF STORIES (received 0 stories)");
+                            self.end_of_stories = true;
+                        } else {
+                            // Otherwise, keep adding stories as normal
+                            // Debug output turned off
+                            // println!("ADDING {} MORE STORIES FOR PAGE {}", stories.len(), self.current_page);
+                            
+                            // Create set of existing IDs to avoid duplicates
+                            let mut existing_ids = std::collections::HashSet::new();
+                            for story in &self.stories {
+                                existing_ids.insert(story.id.clone());
+                            }
+                            
+                            // Count stories and store their length before iterating
+                            let _stories_len = stories.len();
+                            
+                            // Only add stories that aren't already in our list
+                            let mut added = 0;
+                            for story in stories {
+                                if !existing_ids.contains(&story.id) {
+                                    self.stories.push(story);
+                                    added += 1;
+                                }
+                            }
+                            
+                            // Debug output turned off
+                            // println!("Added {} new stories (filtered out {} duplicates)", 
+                            //          added, _stories_len - added);
+                            // println!("Story count: {} → {}", _current_count, self.stories.len());
+                            
+                            // Handle different cases for detecting end of stories:
+                            // 1. If we added ZERO new stories, we've reached the end
+                            // 2. If we added very few stories and we're on a high page number
+                            if added == 0 {
+                                // Debug output turned off
+                                // println!("NO new stories added, marking as end of content");
+                                self.end_of_stories = true;
+                            } 
+                            // If we're on page 3+ and added fewer than 5 stories, likely the end
+                            else if added < 5 && self.current_page >= 3 {
+                                // Debug output turned off
+                                // println!("Very few new stories ({}) added on page {}, marking as end of content", 
+                                //          added, self.current_page);
+                                self.end_of_stories = true;
+                            }
+                            // Allow first few pages to have fewer stories without ending
+                            else if added < 2 && self.current_page >= 2 {
+                                // Debug output turned off
+                                // println!("Almost no new stories on page {}, marking as end of content", 
+                                //          self.current_page);
+                                self.end_of_stories = true;
+                            }
+                        }
+                        self.loading_more_stories = false;
+                        // Debug output turned off
+                        // println!("loading_more_stories set to false");
+                    } else {
+                        // Otherwise, replace the existing stories
+                        // Debug output turned off
+                        // println!("Replacing existing stories with {} new stories", stories.len());
+                        self.stories = stories;
+                    }
                     self.loading = false;
                     self.stories_receiver = None; // Consume the receiver
                     self.needs_repaint = true;
+                    // Debug output turned off
+                    // println!("Loading completed, ready for next scroll event");
                 }
                 Ok(None) => {
-                    // Add a test item for debugging
-                    self.stories = vec![
-                        crate::models::HackerNewsItem {
-                            id: "1".to_string(),
-                            title: "Test Item - Loading Failed".to_string(),
-                            url: "https://example.com".to_string(),
-                            domain: "example.com".to_string(),
-                            by: "test_user".to_string(),
-                            score: 100,
-                            time_ago: "1 hour ago".to_string(),
-                            comments_count: 10,
-                        }
-                    ];
+                    if !self.loading_more_stories {
+                        // Add a test item for debugging only if we're not loading more
+                        self.stories = vec![
+                            crate::models::HackerNewsItem {
+                                id: "1".to_string(),
+                                title: "Test Item - Loading Failed".to_string(),
+                                url: "https://example.com".to_string(),
+                                domain: "example.com".to_string(),
+                                by: "test_user".to_string(),
+                                score: 100,
+                                time_ago: "1 hour ago".to_string(),
+                                comments_count: 10,
+                                original_index: 0,
+                            }
+                        ];
+                    }
                     self.loading = false;
+                    self.loading_more_stories = false;
                     self.stories_receiver = None; // Consume the receiver
                     self.needs_repaint = true;
                 }
@@ -509,6 +801,7 @@ impl HackerNewsReaderApp {
                             score: 100,
                             time_ago: "1 hour ago".to_string(),
                             comments_count: 10,
+                            original_index: 0,
                         }
                     ];
                     self.loading = false;
@@ -623,6 +916,15 @@ impl HackerNewsReaderApp {
             self.selected_story = None;
             self.comments.clear();
             
+            // Reset pagination variables
+            self.current_page = 1;
+            self.end_of_stories = false;
+            self.loading_more_stories = false; // Explicitly reset this flag to avoid getting stuck
+            self.stories_scroll_offset = 0.0; // Reset scroll position
+            
+            // Debug output turned off
+            // println!("Tab switched to {:?} - Reset pagination (page=1, end_of_stories=false)", tab);
+            
             // Reload stories for the new tab
             self.load_stories();
             self.needs_repaint = true;
@@ -660,6 +962,7 @@ impl eframe::App for HackerNewsReaderApp {
         unsafe {
             if FIRST_FRAME {
                 self.load_stories();
+                self.reload_favorites();
                 FIRST_FRAME = false;
             }
         }
@@ -675,16 +978,103 @@ impl eframe::App for HackerNewsReaderApp {
         // Process keyboard shortcuts
         self.process_keyboard_shortcuts(ctx);
         
+        // Process any pending actions
+        if let Some(story_id) = self.pending_favorites_toggle.take() {
+            // Find the story by ID either in stories or selected story
+            let story_opt = 
+                if let Some(ref selected) = self.selected_story {
+                    if selected.id == story_id {
+                        Some(selected.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    self.stories.iter().find(|s| s.id == story_id).cloned()
+                };
+                
+            if let Some(story) = story_opt {
+                // Toggle the favorite
+                let is_favorite = self.is_favorite(&story_id);
+                
+                let result = if is_favorite {
+                    // Remove from favorites
+                    self.database.remove_favorite(&story_id)
+                } else {
+                    // Add to favorites
+                    self.database.add_favorite(&story)
+                };
+                
+                if let Err(e) = result {
+                    eprintln!("Error toggling favorite status: {}", e);
+                }
+                
+                // Update local list
+                self.reload_favorites();
+            }
+            
+            self.needs_repaint = true;
+        }
+        
         // Request repaint if needed
         if self.needs_repaint {
             ctx.request_repaint();
             self.needs_repaint = false;
         }
         
+        // Render favorites panel if it's visible
+        if self.show_favorites_panel {
+            self.render_favorites_panel(ctx);
+        }
+        
         // Set up main layout
         egui::CentralPanel::default().show(ctx, |ui| {
             // Create a top header bar
             ui.horizontal(|ui| {
+                // Side panel toggle button
+                let panel_btn = ui.add(
+                    egui::Button::new(
+                        RichText::new("☰")  // Hamburger menu icon
+                            .color(if self.show_favorites_panel { self.theme.highlight } else { self.theme.button_foreground })
+                            .size(22.0)
+                    )
+                    .min_size(egui::Vec2::new(32.0, 32.0))
+                    .corner_radius(CornerRadius::same(6))
+                    .fill(self.theme.button_background)
+                );
+                
+                if panel_btn.clicked() {
+                    self.toggle_favorites_panel();
+                }
+                
+                if panel_btn.hovered() {
+                    ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                    
+                    // Show tooltip
+                    let tooltip_pos = egui::pos2(
+                        panel_btn.rect.left(),
+                        panel_btn.rect.bottom() + 5.0
+                    );
+                    
+                    egui::Area::new(egui::Id::new("panel_tooltip_area"))
+                        .order(egui::Order::Tooltip)
+                        .fixed_pos(tooltip_pos)
+                        .show(ctx, |ui| {
+                            egui::Frame::popup(ui.style())
+                                .fill(self.theme.card_background)
+                                .stroke(Stroke::new(1.0, self.theme.separator))
+                                .corner_radius(CornerRadius::same(6))
+                                .show(ui, |ui| {
+                                    ui.add(egui::Label::new(
+                                        if self.show_favorites_panel {
+                                            "Hide Favorites"
+                                        } else {
+                                            "Show Favorites"
+                                        }
+                                    ));
+                                });
+                        });
+                }
+                
                 ui.add_space(8.0);
                 ui.heading(
                     RichText::new("Hacker News Reader")
@@ -785,6 +1175,9 @@ impl eframe::App for HackerNewsReaderApp {
                                 Tab::Hot => "hot",
                                 Tab::New => "new",
                                 Tab::Show => "show",
+                                Tab::Ask => "ask",
+                                Tab::Jobs => "jobs",
+                                Tab::Best => "best",
                             };
                             
                             let handle = thread::spawn(move || {
@@ -901,7 +1294,7 @@ impl eframe::App for HackerNewsReaderApp {
                                     .stroke(Stroke::new(1.0, self.theme.separator))
                                     .corner_radius(CornerRadius::same(6))
                                     .show(ui, |ui| {
-                                        ui.add(egui::Label::new("Back to Stories"));
+                                        ui.add(egui::Label::new("Back to Stories (or press Backspace)"));
                                     });
                             });
                     }
@@ -910,7 +1303,14 @@ impl eframe::App for HackerNewsReaderApp {
                         clear = true;
                     }
                     
+                    // Add backspace hint
                     ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("Press Backspace to return")
+                            .size(13.0)
+                            .color(self.theme.secondary_text)
+                            .italics()
+                    );
                 });
                 
                 clear
@@ -923,10 +1323,13 @@ impl eframe::App for HackerNewsReaderApp {
                 self.comments.clear();
             }
 
-            if let Some(story) = &self.selected_story {
+            if let Some(ref selected_story) = self.selected_story {
+                // Clone the story to avoid borrow checker issues
+                let story = selected_story.clone();
+                
                 // Story title with color based on score
                 ui.add_space(8.0);
-                let title_color = self.get_title_color(story.score);
+                let title_color = self.theme.get_title_color(story.score);
                 ui.label(
                     RichText::new(&story.title)
                         .size(22.0)
@@ -936,10 +1339,10 @@ impl eframe::App for HackerNewsReaderApp {
                 ui.add_space(8.0);
                 
                 // Get card background based on score using our helper method
-                let card_background = self.get_card_background(story.score);
+                let card_background = self.theme.get_card_background(story.score);
                 
                 // Get the appropriate border stroke based on score
-                let card_stroke = self.get_card_stroke(story.score);
+                let card_stroke = self.theme.get_card_stroke(story.score);
                 
                 // Story details card with background and border based on score
                 egui::Frame::new()
@@ -983,6 +1386,7 @@ impl eframe::App for HackerNewsReaderApp {
                             );
                             
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                // Open article button
                                 if !story.url.is_empty() {
                                     let article_btn = ui.add_sized(
                                         [40.0, 30.0],
@@ -1016,6 +1420,57 @@ impl eframe::App for HackerNewsReaderApp {
                                     if article_btn.clicked() {
                                         self.open_link(&story.url);
                                     }
+                                    
+                                    ui.add_space(8.0);
+                                }
+                                
+                                // Favorite button
+                                let story_id = &story.id;
+                                let is_favorite = self.is_favorite(story_id);
+                                let favorite_color = if is_favorite {
+                                    Color32::from_rgb(255, 204, 0) // Gold star color for favorited
+                                } else {
+                                    self.theme.secondary_text // Gray star for not favorited
+                                };
+                                
+                                let favorite_btn = ui.add_sized(
+                                    [40.0, 30.0],
+                                    egui::Button::new(
+                                        RichText::new("★") // Star symbol
+                                            .size(18.0)
+                                            .color(favorite_color)
+                                    )
+                                    .corner_radius(CornerRadius::same(6))
+                                    .fill(self.theme.button_background)
+                                );
+                                
+                                // Add tooltip for the favorite button
+                                if favorite_btn.hovered() {
+                                    let tooltip_pos = favorite_btn.rect.left_top() + egui::vec2(0.0, -30.0);
+                                    
+                                    egui::Area::new("favorite_tooltip_area".into())
+                                        .order(egui::Order::Tooltip)
+                                        .fixed_pos(tooltip_pos)
+                                        .show(ui.ctx(), |ui| {
+                                            egui::Frame::popup(ui.style())
+                                                .fill(self.theme.card_background)
+                                                .stroke(Stroke::new(1.0, self.theme.separator))
+                                                .corner_radius(CornerRadius::same(6))
+                                                .show(ui, |ui| {
+                                                    ui.add(egui::Label::new(
+                                                        if is_favorite {
+                                                            "Remove from Favorites"
+                                                        } else {
+                                                            "Add to Favorites"
+                                                        }
+                                                    ));
+                                                });
+                                        });
+                                }
+                                
+                                if favorite_btn.clicked() {
+                                    // Set pending toggle
+                                    self.pending_favorites_toggle = Some(story.id.clone());
                                 }
                             });
                         });
@@ -1033,6 +1488,16 @@ impl eframe::App for HackerNewsReaderApp {
                             .color(self.theme.text)
                     );
                     
+                    // Display keyboard navigation hint
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new("Keyboard: Arrows to scroll, Space for Page Down, Backspace to go back")
+                                .size(13.0)
+                                .color(self.theme.secondary_text)
+                                .italics()
+                        );
+                    });
+                    
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Help button with keyboard shortcuts
                         let help_btn = ui.add(
@@ -1047,38 +1512,51 @@ impl eframe::App for HackerNewsReaderApp {
                         );
                         
                         if help_btn.hovered() {
-                            // Fixed position tooltip to avoid flickering
-                            let tooltip_pos = help_btn.rect.left_top() + egui::vec2(-180.0, -120.0);
+                            // Get screen dimensions for stable positioning
+                            let screen_rect = ctx.screen_rect();
                             
-                            // Use a stable area with fixed positioning for the tooltip
-                            egui::Area::new("shortcuts_tooltip_area".into())
-                                .order(egui::Order::Tooltip)
+                            // Position tooltip at a fixed distance from the top-right corner
+                            // This creates more stability than positioning relative to the button
+                            let tooltip_pos = egui::pos2(
+                                screen_rect.right() - 250.0,  // Fixed distance from right edge
+                                screen_rect.top() + 140.0     // Fixed distance from top
+                            );
+                            
+                            // Use a completely stable window with fixed position and size
+                            egui::Window::new("shortcuts_help")
+                                .id(egui::Id::new("stable_shortcuts_window"))
+                                .title_bar(false)
+                                .resizable(false)
+                                .collapsible(false)
                                 .fixed_pos(tooltip_pos)
-                                .show(ui.ctx(), |ui| {
-                                    egui::Frame::popup(ui.style())
-                                        .fill(self.theme.card_background)
-                                        .stroke(Stroke::new(1.0, self.theme.separator))
-                                        .corner_radius(CornerRadius::same(6))
-                                        .show(ui, |ui| {
-                                            ui.vertical(|ui| {
-                                                ui.add(egui::Label::new(RichText::new("Keyboard Shortcuts:").strong()));
-                                                ui.add_space(4.0);
-                                                
-                                                ui.add(egui::Label::new(RichText::new("Comment Controls:").strong()));
-                                                ui.add(egui::Label::new("C - Collapse all top-level comments"));
-                                                ui.add(egui::Label::new("Shift+C - Expand all comments"));
-                                                
-                                                ui.add_space(4.0);
-                                                ui.add(egui::Label::new(RichText::new("Navigation:").strong()));
-                                                ui.add(egui::Label::new("← / → - Previous/Next page"));
-                                                ui.add(egui::Label::new("Home - First page"));
-                                                ui.add(egui::Label::new("End - Last page"));
-                                                
-                                                ui.add_space(4.0);
-                                                ui.add(egui::Label::new(RichText::new("Mouse:").strong()));
-                                                ui.add(egui::Label::new("Click [+]/[-] to collapse/expand comments"));
-                                            });
-                                        });
+                                .fixed_size([220.0, 240.0])  // Fixed size to prevent any layout changes
+                                .frame(egui::Frame::window(&ctx.style())
+                                    .fill(self.theme.card_background)
+                                    .stroke(Stroke::new(1.0, self.theme.separator))
+                                    .corner_radius(CornerRadius::same(6))
+                                    .shadow(egui::epaint::Shadow::NONE))  // No shadow to prevent flicker
+                                .show(ctx, |ui| {
+                                    ui.set_max_width(220.0);
+                                    ui.vertical(|ui| {
+                                        ui.add(egui::Label::new(RichText::new("Keyboard Shortcuts:").strong()));
+                                        ui.add_space(4.0);
+                                        
+                                        ui.add(egui::Label::new(RichText::new("Comment Controls:").strong()));
+                                        ui.add(egui::Label::new("C - Collapse all top-level comments"));
+                                        ui.add(egui::Label::new("Shift+C - Expand all comments"));
+                                        ui.add(egui::Label::new("Backspace - Return to stories"));
+                                        
+                                        ui.add_space(4.0);
+                                        ui.add(egui::Label::new(RichText::new("Navigation:").strong()));
+                                        ui.add(egui::Label::new("Left/Right - Previous/Next page"));
+                                        ui.add(egui::Label::new("Up/Down - Scroll up/down"));
+                                        ui.add(egui::Label::new("Space - Page down"));
+                                        ui.add(egui::Label::new("Home/End - First/Last page"));
+                                        
+                                        ui.add_space(4.0);
+                                        ui.add(egui::Label::new(RichText::new("Mouse:").strong()));
+                                        ui.add(egui::Label::new("Click [+]/[-] to collapse/expand"));
+                                    });
                                 });
                         }
                     });
@@ -1089,9 +1567,11 @@ impl eframe::App for HackerNewsReaderApp {
                 // Pagination controls at the top
                 self.render_pagination_controls(ui);
                 
-                // Comments section with scrolling
-                ScrollArea::vertical()
+                // Comments section with scrolling - use ID for persistent state
+                let scroll_response = ScrollArea::vertical()
+                    .id_salt("comments_scroll_area") // Using id_salt instead of id_source
                     .auto_shrink([false, false])
+                    .vertical_scroll_offset(self.comments_scroll_offset)
                     .show(ui, |ui| {
                         // Get comments for the current page only
                         let page_comments = self.get_current_page_comments();
@@ -1099,7 +1579,15 @@ impl eframe::App for HackerNewsReaderApp {
                         for comment in page_comments {
                             self.render_comment(ui, comment, 0);
                         }
+                        
+                        // Allow extra space for scrolling at the bottom
+                        ui.add_space(20.0);
                     });
+                    
+                // Store the actual scroll position after the user might have scrolled manually
+                let scroll_offset = scroll_response.state.offset.y;
+                self.comments_scroll_offset = scroll_offset;
+                
                 
                 // Pagination controls at the bottom (duplicated for convenience)
                 ui.add_space(8.0);
@@ -1113,21 +1601,196 @@ impl eframe::App for HackerNewsReaderApp {
                     Tab::Hot => "Hot Stories",
                     Tab::New => "New Stories",
                     Tab::Show => "Show HN",
+                    Tab::Ask => "Ask HN",
+                    Tab::Jobs => "Jobs",
+                    Tab::Best => "Best Stories",
                 };
                 
-                ui.heading(
-                    RichText::new(tab_name)
-                        .size(18.0)
-                        .color(self.theme.text)
-                );
+                ui.horizontal(|ui| {
+                    ui.heading(
+                        RichText::new(tab_name)
+                            .size(18.0)
+                            .color(self.theme.text)
+                    );
+                    
+                    // Display keyboard navigation hint
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new("Keyboard: Arrows to scroll, Space for Page Down, Backspace to go back")
+                                .size(13.0)
+                                .color(self.theme.secondary_text)
+                                .italics()
+                        );
+                    });
+                });
                 
                 ui.add_space(8.0);
                 
-                ScrollArea::vertical()
+                // Stories section with scrolling - use ID for persistent state
+                let scroll_response = ScrollArea::vertical()
+                    .id_salt("stories_scroll_area") // Using id_salt instead of id_source
                     .auto_shrink([false, false])
+                    .vertical_scroll_offset(self.stories_scroll_offset)
                     .show(ui, |ui| {
                         self.render_stories_table(ui);
+                        
+                        // Show loading indicator at the bottom if loading more stories
+                        if self.loading_more_stories {
+                            ui.add_space(10.0);
+                            ui.vertical_centered(|ui| {
+                                ui.spinner();
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new("Loading more stories...")
+                                        .color(self.theme.secondary_text)
+                                        .size(14.0)
+                                );
+                            });
+                        } else if self.end_of_stories {
+                            // Show message when we've reached the end
+                            ui.add_space(10.0);
+                            ui.vertical_centered(|ui| {
+                                // Determine if we reached the end due to max pages or no more content
+                                let message = if self.current_page >= 5 {
+                                    format!("Showing maximum of {} stories. Scroll up to view.", self.stories.len())
+                                } else {
+                                    "End of stories.".to_string()
+                                };
+                                
+                                ui.label(
+                                    RichText::new(message)
+                                        .color(self.theme.secondary_text)
+                                        .size(14.0)
+                                );
+                            });
+                        }
+                        
+                        // Allow extra space for scrolling at the bottom
+                        ui.add_space(20.0);
                     });
+                    
+                // Store the actual scroll position after the user might have scrolled manually
+                let scroll_offset = scroll_response.state.offset.y;
+                self.stories_scroll_offset = scroll_offset;
+
+                // Detect when we're at the bottom and should load more stories
+                // Calculate an approximate threshold based on the current stories and UI layout
+                let stories_count = self.stories.len();
+                
+                // Get the viewport height first
+                let viewport_height = scroll_response.inner_rect.height();
+                
+                // Based on the debug info, we need to adjust our story height calculation
+                // Looking at your scroll values, it seems the stories might be taller than we thought
+                let average_story_height = 140.0; // Adjusted down based on your debug output
+                let header_height = 60.0;
+                let footer_height = 60.0;  
+                
+                // Calculate a more accurate estimate of the content height
+                let estimated_content_height = 
+                    if stories_count == 0 {
+                        // Avoid division by zero
+                        viewport_height + 100.0
+                    } else {
+                        // The calculation below is based on:
+                        // Total height = Header + (Stories * Height per story) + Footer
+                        header_height + (stories_count as f32 * average_story_height) + footer_height
+                    };
+                
+                // IMPORTANT: Your debug output shows your offset is consistently near 2049.5
+                // which suggests we might be hitting a limit in the scroll behavior.
+                // Let's adjust our content calculation based on this observation:
+                
+                // Calculate distance to bottom for debugging
+                let distance_to_bottom = estimated_content_height - scroll_offset - viewport_height;
+                let _scroll_percentage = if estimated_content_height > viewport_height {
+                    scroll_offset / (estimated_content_height - viewport_height)
+                } else {
+                    1.0
+                };
+                
+                // Calculate max possible scroll position (content height minus viewport height)
+                let max_scroll = (estimated_content_height - viewport_height).max(0.0);
+                
+                // Calculate how close we are to the bottom as a percentage (0% = top, 100% = bottom)
+                // This is more intuitive than the previous percentage calculation
+                let bottom_proximity_pct = if max_scroll > 0.0 {
+                    (scroll_offset / max_scroll) * 100.0
+                } else {
+                    100.0 // If content fits in viewport, we're at the bottom
+                };
+                
+                // Based on your debug output, we need a completely different approach:
+                // Your debug shows your maximum scroll appears to be around 2049.5 consistently
+                // This suggests there may be some scroll limit in the eGUI framework
+                
+                // Calculate where we think the bottom is
+                let _visible_bottom = scroll_offset + viewport_height;
+                
+                // Instead of comparing with estimated content height, use a set of better indicators:
+                // 1. User's specific situation - your debug shows ~2049.5 is max scroll
+                // 2. If offset is very close to max_scroll (within 5% or 100px)
+                // 3. If we have a reasonable number of stories and are past a specific scroll threshold
+                let at_bottom = 
+                    // Your specific case - around 2049.5 seems to be max scroll based on debug output
+                    (scroll_offset > 2000.0) ||
+                    
+                    // General cases that should work in most situations
+                    (max_scroll > 0.0 && scroll_offset > (max_scroll * 0.95)) ||
+                    (max_scroll - scroll_offset < 100.0) ||
+                    
+                    // If we have more than 20 stories and scrolled significantly
+                    (self.stories.len() > 20 && scroll_offset > 1500.0);
+                
+                // Print scroll debug info every time to diagnose issues
+                // Debug output turned off
+                // println!("Scroll debug: offset={:.1}, viewport={:.1}, content={:.1}, visible_bottom={:.1}, max_scroll={:.1}, distance_to_bottom={:.1}, bottom_proximity={:.1}%, at_bottom={}, loading={}, more={}, end={}", 
+                //     scroll_offset, viewport_height, estimated_content_height, 
+                //     _visible_bottom, max_scroll, distance_to_bottom, 
+                //     bottom_proximity_pct, at_bottom,
+                //     self.loading, self.loading_more_stories, self.end_of_stories);
+                
+                // Make the loading trigger less aggressive to avoid loading too early
+                if !self.loading && !self.loading_more_stories && !self.end_of_stories {
+                    // We don't want to load more than once per "session" of scrolling,
+                    // so we'll track if we're close enough to trigger loading soon
+                    
+                    // We want to only trigger when actually at the bottom, not during normal scrolling
+                    let should_load = 
+                        // Only trigger when we're REALLY at the bottom
+                        at_bottom ||                       // At bottom detection
+                        
+                        // Specific case based on your debug values, but with higher threshold
+                        // to prevent triggering too early
+                        (scroll_offset > 2030.0) ||        // Only when VERY close to max scroll
+                        
+                        // Only when we're 85% scrolled down (much less aggressive)
+                        (bottom_proximity_pct > 85.0) ||
+                        
+                        // Very close to bottom in pixels (much less aggressive)
+                        (distance_to_bottom < 300.0);
+                    
+                    if should_load {
+                        #[allow(dead_code)]
+                        const MAX_PAGES: usize = 5; // Keep in sync with the limit in load_more_stories
+                        
+                        // Debug output turned off
+                        // println!("==========================================");
+                        // println!("AUTO-LOADING MORE STORIES - Page {} -> {} (max: {})", 
+                        //          self.current_page, self.current_page + 1, MAX_PAGES);
+                        // println!("SCROLL STATS:");
+                        // println!("  At bottom: {}", at_bottom);
+                        // println!("  Bottom proximity: {:.1}%", bottom_proximity_pct);
+                        // println!("  Distance to bottom: {:.1}px", distance_to_bottom);
+                        // println!("  Offset: {:.1}/{:.1} ({}%)", scroll_offset, max_scroll, 
+                        //          if max_scroll > 0.0 { (scroll_offset/max_scroll) * 100.0 } else { 100.0 });
+                        // println!("  Story count: {}/{} ({}%)", 
+                        //          self.stories.len(), MAX_PAGES * 30,
+                        //          (self.stories.len() as f32 / (MAX_PAGES * 30) as f32) * 100.0);
+                        // println!("==========================================");
+                        self.load_more_stories();
+                    }
+                }
             }
         });
     }
@@ -1149,66 +1812,177 @@ impl HackerNewsReaderApp {
     
     // Process keyboard shortcuts
     fn process_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
-        // Only process keyboard shortcuts when viewing comments
-        if self.selected_story.is_none() || self.comments.is_empty() {
-            return;
-        }
-        
+        // Get keyboard input
         let input = ctx.input(|i| {
             (
-                i.key_pressed(egui::Key::Space), // Collapse/expand focused comment
-                i.key_pressed(egui::Key::C),     // Collapse/expand all comments
-                i.modifiers.shift,               // Modifier for "Collapse all" vs "Expand all"
-                i.key_pressed(egui::Key::ArrowLeft),  // Previous page
-                i.key_pressed(egui::Key::ArrowRight), // Next page
-                i.key_pressed(egui::Key::Home),       // First page
-                i.key_pressed(egui::Key::End),        // Last page
+                i.key_pressed(egui::Key::Space),        // Space - Scroll down / collapse comment
+                i.key_pressed(egui::Key::C),            // C - Collapse/expand all comments
+                i.modifiers.shift,                      // Modifier for various actions
+                i.key_pressed(egui::Key::ArrowLeft),    // Left - Previous page / scroll left
+                i.key_pressed(egui::Key::ArrowRight),   // Right - Next page / scroll right
+                i.key_pressed(egui::Key::ArrowUp),      // Up - Scroll up
+                i.key_pressed(egui::Key::ArrowDown),    // Down - Scroll down
+                i.key_pressed(egui::Key::Home),         // Home - First page / top of content
+                i.key_pressed(egui::Key::End),          // End - Last page / bottom of content
+                i.key_pressed(egui::Key::PageUp),       // Page Up - Scroll up a page
+                i.key_pressed(egui::Key::PageDown),     // Page Down - Scroll down a page
+                i.key_pressed(egui::Key::Backspace),    // Backspace - Go back to stories view
             )
         });
         
-        if input.0 {
-            // Space - Toggle the collapse state of focused comment
-            // In a more sophisticated implementation, we'd track the focused comment
-            // For now, this placeholder doesn't do anything
-        }
-        
-        if input.1 {
-            // C - Toggle all comments based on shift key
-            if input.2 {
-                // Shift+C: Expand all comments
-                self.collapsed_comments.clear();
-            } else {
-                // C: Collapse all top-level comments
-                self.collapse_all_top_level_comments();
+        // Different keyboard handling based on current view
+        if let Some(_) = &self.selected_story {
+            // Check for backspace key to return to story list (highest priority)
+            if input.11 { // Backspace key
+                self.selected_story = None;
+                self.comments.clear();
+                self.comments_scroll_offset = 0.0;
+                self.needs_repaint = true;
+                return; // Don't process other keys after navigation
             }
-            self.needs_repaint = true;
-        }
-        
-        // Page navigation with keyboard
-        let (current_page, total_pages, _) = self.get_pagination_info();
-        
-        // Left arrow - Previous page
-        if input.3 && current_page > 0 {
-            self.comments_page = current_page - 1;
-            self.needs_repaint = true;
-        }
-        
-        // Right arrow - Next page
-        if input.4 && current_page < total_pages - 1 {
-            self.comments_page = current_page + 1;
-            self.needs_repaint = true;
-        }
-        
-        // Home key - First page
-        if input.5 && current_page > 0 {
-            self.comments_page = 0;
-            self.needs_repaint = true;
-        }
-        
-        // End key - Last page
-        if input.6 && current_page < total_pages - 1 {
-            self.comments_page = total_pages - 1;
-            self.needs_repaint = true;
+            
+            // Comment view shortcuts
+            if !self.comments.is_empty() {
+                // C - Toggle all comments based on shift key
+                if input.1 {
+                    if input.2 { // Shift+C
+                        // Expand all comments
+                        self.collapsed_comments.clear();
+                    } else {
+                        // Collapse all top-level comments
+                        self.collapse_all_top_level_comments();
+                    }
+                    self.needs_repaint = true;
+                    return; // Don't process other keys after this action
+                }
+                
+                // Page navigation with keyboard for comments pagination
+                let (current_page, total_pages, _) = self.get_pagination_info();
+                
+                // Left arrow - Previous page
+                if input.3 && current_page > 0 {
+                    self.comments_page = current_page - 1;
+                    self.comments_scroll_offset = 0.0; // Reset scroll position on page change
+                    self.needs_repaint = true;
+                    return;
+                }
+                
+                // Right arrow - Next page
+                if input.4 && current_page < total_pages - 1 {
+                    self.comments_page = current_page + 1;
+                    self.comments_scroll_offset = 0.0; // Reset scroll position on page change
+                    self.needs_repaint = true;
+                    return;
+                }
+                
+                // Home key - First page
+                if input.7 && current_page > 0 {
+                    self.comments_page = 0;
+                    self.comments_scroll_offset = 0.0; // Reset scroll position on page change
+                    self.needs_repaint = true;
+                    return;
+                }
+                
+                // End key - Last page
+                if input.8 && current_page < total_pages - 1 {
+                    self.comments_page = total_pages - 1;
+                    self.comments_scroll_offset = 0.0; // Reset scroll position on page change
+                    self.needs_repaint = true;
+                    return;
+                }
+            }
+            
+            // Scroll controls for comments
+            const SCROLL_AMOUNT: f32 = 30.0;
+            const SCROLL_PAGE_AMOUNT: f32 = 500.0; // Larger value for more of a "page" feel
+            
+            // Space or PageDown - Scroll down by a page
+            if input.0 || input.10 {
+                self.comments_scroll_offset += SCROLL_PAGE_AMOUNT; // Both space and PageDown scroll a full page
+                self.needs_repaint = true;
+            }
+            
+            // PageUp - Scroll up a page
+            if input.9 {
+                self.comments_scroll_offset -= SCROLL_PAGE_AMOUNT;
+                if self.comments_scroll_offset < 0.0 {
+                    self.comments_scroll_offset = 0.0;
+                }
+                self.needs_repaint = true;
+            }
+            
+            // Arrow Up - Scroll up
+            if input.5 {
+                self.comments_scroll_offset -= SCROLL_AMOUNT;
+                if self.comments_scroll_offset < 0.0 {
+                    self.comments_scroll_offset = 0.0;
+                }
+                self.needs_repaint = true;
+            }
+            
+            // Arrow Down - Scroll down
+            if input.6 {
+                self.comments_scroll_offset += SCROLL_AMOUNT;
+                self.needs_repaint = true;
+            }
+            
+            // Home - Scroll to top
+            if input.7 && !input.2 { // Home without Shift (Shift+Home is for pagination)
+                self.comments_scroll_offset = 0.0;
+                self.needs_repaint = true;
+            }
+            
+            // End - Scroll to bottom (approximated)
+            if input.8 && !input.2 { // End without Shift (Shift+End is for pagination)
+                self.comments_scroll_offset = 10000.0; // A large value to scroll to bottom
+                self.needs_repaint = true;
+            }
+        } else {
+            // Stories view shortcuts
+            const SCROLL_AMOUNT: f32 = 30.0;
+            const SCROLL_PAGE_AMOUNT: f32 = 500.0; // Larger value for more of a "page" feel
+            
+            // Space or PageDown - Scroll down by a page
+            if input.0 || input.10 {
+                self.stories_scroll_offset += SCROLL_PAGE_AMOUNT; // Both space and PageDown scroll a full page
+                self.needs_repaint = true;
+            }
+            
+            // PageUp - Scroll up a page
+            if input.9 {
+                self.stories_scroll_offset -= SCROLL_PAGE_AMOUNT;
+                if self.stories_scroll_offset < 0.0 {
+                    self.stories_scroll_offset = 0.0;
+                }
+                self.needs_repaint = true;
+            }
+            
+            // Arrow Up - Scroll up
+            if input.5 {
+                self.stories_scroll_offset -= SCROLL_AMOUNT;
+                if self.stories_scroll_offset < 0.0 {
+                    self.stories_scroll_offset = 0.0;
+                }
+                self.needs_repaint = true;
+            }
+            
+            // Arrow Down - Scroll down
+            if input.6 {
+                self.stories_scroll_offset += SCROLL_AMOUNT;
+                self.needs_repaint = true;
+            }
+            
+            // Home - Scroll to top
+            if input.7 {
+                self.stories_scroll_offset = 0.0;
+                self.needs_repaint = true;
+            }
+            
+            // End - Scroll to bottom (approximated)
+            if input.8 {
+                self.stories_scroll_offset = 10000.0; // A large value to scroll to bottom
+                self.needs_repaint = true;
+            }
         }
     }
     
@@ -1276,12 +2050,18 @@ impl HackerNewsReaderApp {
         let ctx = ui.ctx().clone(); // Get context from UI
         let mut story_to_view = None;
         
-        for (i, story) in self.stories.iter().enumerate() {
+        // Clone stories to avoid borrow issues
+        let stories_clone = self.stories.clone();
+        
+        // Calculate proper starting rank for display (always start from 1)
+        let mut current_rank = 1;
+        
+        for (_i, story) in stories_clone.iter().enumerate() {
             // Get card background based on score using our helper method
-            let card_background = self.get_card_background(story.score);
+            let card_background = self.theme.get_card_background(story.score);
             
             // Get the appropriate border stroke based on score
-            let card_stroke = self.get_card_stroke(story.score);
+            let card_stroke = self.theme.get_card_stroke(story.score);
             
             // Create a card for each story with background and border based on score
             egui::Frame::new()
@@ -1293,16 +2073,25 @@ impl HackerNewsReaderApp {
                 .show(ui, |ui| {
                     // Top row with rank, title, and score
                     ui.horizontal(|ui| {
-                        // Rank indicator
+                        // Use the current_rank which always increments correctly
+                        let rank = current_rank;
+                        
+                        // Increment for next story
+                        current_rank += 1;
+                        
+                        // Cap at maximum number of stories (150)
+                        if current_rank > 150 {
+                            current_rank = 150;
+                        }
                         ui.label(
-                            RichText::new(format!("{}", i+1))
+                            RichText::new(format!("{}", rank))
                                 .color(self.theme.secondary_text)
                                 .size(16.0)
                         );
                         ui.add_space(8.0);
                         
                         // Story title with clickable behavior and color highlighting based on score
-                        let score_color = self.get_title_color(story.score);
+                        let score_color = self.theme.get_title_color(story.score);
                         let title_label = ui.add(
                             egui::Label::new(
                                 RichText::new(&story.title)
@@ -1408,6 +2197,57 @@ impl HackerNewsReaderApp {
                                     });
                             }
                             
+                            // Favorite button
+                            ui.add_space(8.0);
+                            
+                            // Get favorite status
+                            let is_favorite = self.is_favorite(&story.id);
+                            let favorite_color = if is_favorite {
+                                Color32::from_rgb(255, 204, 0) // Gold star color for favorited
+                            } else {
+                                self.theme.secondary_text // Gray star for not favorited
+                            };
+                            
+                            let favorite_btn = ui.add_sized(
+                                [40.0, 28.0],
+                                egui::Button::new(
+                                    RichText::new("★") // Star symbol
+                                        .size(18.0)
+                                        .color(favorite_color)
+                                )
+                                .corner_radius(CornerRadius::same(6))
+                                .fill(self.theme.button_background)
+                            );
+                            
+                            // Add tooltip for favorite button
+                            if favorite_btn.hovered() {
+                                let tooltip_pos = favorite_btn.rect.left_top() + egui::vec2(0.0, -30.0);
+                                
+                                // Use the story ID to make the tooltip unique per story
+                                egui::Area::new(egui::Id::new("favorite_tooltip_area").with(story.id.clone()))
+                                    .order(egui::Order::Tooltip)
+                                    .fixed_pos(tooltip_pos)
+                                    .show(&ctx, |ui| {
+                                        egui::Frame::popup(ui.style())
+                                            .fill(self.theme.card_background)
+                                            .stroke(Stroke::new(1.0, self.theme.separator))
+                                            .corner_radius(CornerRadius::same(6))
+                                            .show(ui, |ui| {
+                                                ui.add(egui::Label::new(
+                                                    if is_favorite {
+                                                        "Remove from Favorites"
+                                                    } else {
+                                                        "Add to Favorites"
+                                                    }
+                                                ));
+                                            });
+                                    });
+                            }
+                            
+                            if favorite_btn.clicked() {
+                                self.pending_favorites_toggle = Some(story.id.clone());
+                            }
+                            
                             // Link button if URL exists
                             if !story.url.is_empty() {
                                 ui.add_space(8.0);
@@ -1455,6 +2295,8 @@ impl HackerNewsReaderApp {
             let force_refresh = ctx.input(|i| i.modifiers.shift);
             self.view_comments(story, force_refresh);
         }
+        
+        // No need to process favorite toggles here anymore - it's handled in update()
     }
 
     // Function to clean HTML content in comments
@@ -1799,6 +2641,630 @@ impl HackerNewsReaderApp {
         
         if show_btn.clicked() {
             self.switch_tab(Tab::Show);
+        }
+        
+        // Ask tab
+        let ask_btn = ui.add_sized(
+            button_size,
+            egui::Button::new(
+                if self.current_tab == Tab::Ask {
+                    RichText::new("Ask")
+                        .size(16.0)
+                        .color(self.theme.highlight)
+                        .strong()
+                } else {
+                    RichText::new("Ask")
+                        .size(16.0)
+                        .color(self.theme.secondary_text)
+                }
+            )
+            .fill(if self.current_tab == Tab::Ask {
+                self.theme.card_background
+            } else {
+                Color32::TRANSPARENT
+            })
+            .stroke(if self.current_tab == Tab::Ask {
+                egui::Stroke::new(2.0, self.theme.highlight)
+            } else {
+                egui::Stroke::NONE
+            })
+        );
+        
+        if ask_btn.clicked() {
+            self.switch_tab(Tab::Ask);
+        }
+        
+        // Jobs tab
+        let jobs_btn = ui.add_sized(
+            button_size,
+            egui::Button::new(
+                if self.current_tab == Tab::Jobs {
+                    RichText::new("Jobs")
+                        .size(16.0)
+                        .color(self.theme.highlight)
+                        .strong()
+                } else {
+                    RichText::new("Jobs")
+                        .size(16.0)
+                        .color(self.theme.secondary_text)
+                }
+            )
+            .fill(if self.current_tab == Tab::Jobs {
+                self.theme.card_background
+            } else {
+                Color32::TRANSPARENT
+            })
+            .stroke(if self.current_tab == Tab::Jobs {
+                egui::Stroke::new(2.0, self.theme.highlight)
+            } else {
+                egui::Stroke::NONE
+            })
+        );
+        
+        if jobs_btn.clicked() {
+            self.switch_tab(Tab::Jobs);
+        }
+        
+        // Best tab
+        let best_btn = ui.add_sized(
+            button_size,
+            egui::Button::new(
+                if self.current_tab == Tab::Best {
+                    RichText::new("Best")
+                        .size(16.0)
+                        .color(self.theme.highlight)
+                        .strong()
+                } else {
+                    RichText::new("Best")
+                        .size(16.0)
+                        .color(self.theme.secondary_text)
+                }
+            )
+            .fill(if self.current_tab == Tab::Best {
+                self.theme.card_background
+            } else {
+                Color32::TRANSPARENT
+            })
+            .stroke(if self.current_tab == Tab::Best {
+                egui::Stroke::new(2.0, self.theme.highlight)
+            } else {
+                egui::Stroke::NONE
+            })
+        );
+        
+        if best_btn.clicked() {
+            self.switch_tab(Tab::Best);
+        }
+    }
+}// Implement favorites management functionality
+impl HackerNewsReaderApp {
+    // Functions for favorites management
+    #[allow(dead_code)]
+    fn toggle_favorite(&mut self, story: &HackerNewsItem) {
+        let is_favorite = match self.database.is_favorite(&story.id) {
+            Ok(is_fav) => is_fav,
+            Err(e) => {
+                eprintln!("Error checking if story is favorited: {}", e);
+                return;
+            }
+        };
+
+        let result = if is_favorite {
+            // Remove from favorites
+            self.database.remove_favorite(&story.id)
+        } else {
+            // Add to favorites
+            self.database.add_favorite(story)
+        };
+
+        if let Err(e) = result {
+            eprintln!("Error toggling favorite status: {}", e);
+            return;
+        }
+
+        // Update our local favorites list
+        self.reload_favorites();
+        self.needs_repaint = true;
+    }
+
+    fn reload_favorites(&mut self) {
+        self.favorites_loading = true;
+
+        match self.database.get_all_favorites() {
+            Ok(favorites) => {
+                self.favorites = favorites;
+                self.favorites_loading = false;
+                self.needs_repaint = true;
+            }
+            Err(e) => {
+                eprintln!("Error loading favorites: {}", e);
+                self.favorites_loading = false;
+            }
+        }
+    }
+
+    fn is_favorite(&self, id: &str) -> bool {
+        match self.database.is_favorite(id) {
+            Ok(is_fav) => is_fav,
+            Err(_) => false,
+        }
+    }
+    
+    fn toggle_favorites_panel(&mut self) {
+        self.show_favorites_panel = !self.show_favorites_panel;
+        
+        // Reload favorites when panel is opened
+        if self.show_favorites_panel {
+            self.reload_favorites();
+        }
+        
+        self.needs_repaint = true;
+    }
+
+    fn render_favorites_panel(&mut self, ctx: &egui::Context) {
+        let open = self.show_favorites_panel;
+        
+        egui::SidePanel::left("favorites_panel")
+            .resizable(true)
+            .default_width(300.0)
+            .width_range(250.0..=400.0)
+            .show_animated(ctx, open, |ui| {
+                ui.vertical(|ui| {
+                    ui.add_space(8.0);
+                    ui.heading(
+                        RichText::new("Favorites")
+                            .size(20.0)
+                            .color(self.theme.highlight)
+                    );
+                    ui.add_space(8.0);
+                    ui.add(egui::Separator::default().spacing(8.0));
+                    
+                    if self.favorites_loading {
+                        ui.add_space(20.0);
+                        ui.vertical_centered(|ui| {
+                            ui.spinner();
+                            ui.add_space(8.0);
+                            ui.label("Loading favorites...");
+                        });
+                    } else if self.favorites.is_empty() {
+                        ui.add_space(20.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                RichText::new("No favorites yet")
+                                    .color(self.theme.secondary_text)
+                                    .italics()
+                            );
+                            ui.add_space(8.0);
+                            ui.label(
+                                RichText::new("Click the star icon on a story to add it to your favorites")
+                                    .color(self.theme.secondary_text)
+                                    .size(14.0)
+                            );
+                        });
+                    } else {
+                        // Render favorites list
+                        let favorites_clone = self.favorites.clone(); // Clone to avoid borrow issues
+                        let scroll_response = ScrollArea::vertical()
+                            .id_salt("favorites_scroll_area")
+                            .auto_shrink([false, false])
+                            .vertical_scroll_offset(self.favorites_scroll_offset)
+                            .show(ui, |ui| {
+                                // Split favorites into "Todo" and "Done" lists
+                                let (todo_favorites, done_favorites): (Vec<_>, Vec<_>) = 
+                                    favorites_clone.iter().partition(|f| !f.done);
+                                
+                                // Render "Todo" section
+                                ui.vertical(|ui| {
+                                    ui.add_space(8.0);
+                                    ui.heading(
+                                        RichText::new("Todo")
+                                            .size(18.0)
+                                            .color(self.theme.text)
+                                    );
+                                    
+                                    if todo_favorites.is_empty() {
+                                        ui.add_space(8.0);
+                                        ui.label(
+                                            RichText::new("No pending stories")
+                                                .color(self.theme.secondary_text)
+                                                .italics()
+                                        );
+                                    } else {
+                                        for favorite in &todo_favorites {
+                                            self.render_favorite_item_with_checkbox(ui, favorite);
+                                        }
+                                    }
+                                });
+                                
+                                // Separator between Todo and Done
+                                ui.add_space(16.0);
+                                ui.add(egui::Separator::default().spacing(8.0));
+                                
+                                // Render "Done" section
+                                ui.vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.add_space(8.0);
+                                        ui.heading(
+                                            RichText::new("Done")
+                                                .size(18.0)
+                                                .color(self.theme.text)
+                                        );
+                                        
+                                        // Only show clear button if there are done favorites
+                                        if !done_favorites.is_empty() {
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let clear_btn = ui.add_sized(
+                                                    [60.0, 24.0],
+                                                    egui::Button::new(
+                                                        RichText::new("Clear All")
+                                                            .size(14.0)
+                                                            .color(self.theme.button_foreground)
+                                                    )
+                                                    .corner_radius(CornerRadius::same(4))
+                                                    .fill(self.theme.button_background)
+                                                );
+                                                
+                                                if clear_btn.clicked() {
+                                                    // Clear all done favorites
+                                                    match self.database.clear_done_favorites() {
+                                                        Ok(count) => {
+                                                            println!("Cleared {} done favorites", count);
+                                                            // Reload favorites immediately
+                                                            self.reload_favorites();
+                                                        },
+                                                        Err(e) => {
+                                                            eprintln!("Error clearing done favorites: {}", e);
+                                                        }
+                                                    }
+                                                    self.needs_repaint = true;
+                                                }
+                                                
+                                                if clear_btn.hovered() {
+                                                    ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                                                }
+                                            });
+                                        }
+                                    });
+                                    
+                                    if done_favorites.is_empty() {
+                                        ui.add_space(8.0);
+                                        ui.label(
+                                            RichText::new("No completed stories")
+                                                .color(self.theme.secondary_text)
+                                                .italics()
+                                        );
+                                    } else {
+                                        for favorite in &done_favorites {
+                                            self.render_favorite_item_with_checkbox(ui, favorite);
+                                        }
+                                    }
+                                });
+                                
+                                ui.add_space(20.0);
+                            });
+                            
+                        // Store the scroll position
+                        self.favorites_scroll_offset = scroll_response.state.offset.y;
+                    }
+                });
+            });
+            
+        // Update the state variable if the panel was closed by clicking the X
+        self.show_favorites_panel = open;
+    }
+    
+    fn render_favorite_item_with_checkbox(&mut self, ui: &mut egui::Ui, favorite: &FavoriteStory) {
+        let mut view_story = false;
+        
+        // Favorite item card with checkbox
+        ui.horizontal_wrapped(|ui| {
+            // Checkbox for marking done
+            let mut done = favorite.done;
+            if ui.checkbox(&mut done, "").changed() {
+                // Toggle done status in the database
+                if let Err(e) = self.database.toggle_favorite_done(&favorite.id) {
+                    eprintln!("Error toggling favorite done status: {}", e);
+                } else {
+                    // Reload favorites immediately
+                    self.reload_favorites();
+                }
+                self.needs_repaint = true;
+            }
+            
+            ui.vertical(|ui| {
+                // Title with truncation if needed
+                let title_text = if favorite.done {
+                    // Strikethrough text for done items
+                    RichText::new(&favorite.title)
+                        .color(self.theme.secondary_text)
+                        .strikethrough()
+                } else {
+                    RichText::new(&favorite.title)
+                        .color(self.theme.text)
+                        .strong()
+                };
+                
+                let title_label = ui.add(
+                    egui::Label::new(title_text)
+                        .sense(egui::Sense::click())
+                        .wrap()
+                );
+                
+                // Handle click on title
+                if title_label.clicked() {
+                    view_story = true;
+                }
+                
+                if title_label.hovered() {
+                    ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                }
+                
+                // Meta row
+                ui.horizontal(|ui| {
+                    // Score
+                    let score_color = self.theme.score_color(favorite.score);
+                    ui.label(
+                        RichText::new(format!("{} pts", favorite.score))
+                            .color(score_color)
+                            .size(13.0)
+                    );
+                    
+                    ui.label(RichText::new("|").color(self.theme.separator).size(13.0));
+                    
+                    // Domain
+                    if !favorite.domain.is_empty() {
+                        ui.label(
+                            RichText::new(&favorite.domain)
+                                .color(self.theme.secondary_text)
+                                .size(13.0)
+                                .italics()
+                        );
+                        ui.label(RichText::new("|").color(self.theme.separator).size(13.0));
+                    }
+                    
+                    // Author
+                    ui.label(
+                        RichText::new(&format!("by {}", favorite.by))
+                            .color(self.theme.secondary_text)
+                            .size(13.0)
+                    );
+                });
+                
+                // Action buttons
+                ui.horizontal(|ui| {
+                    // Info about when added
+                    let added_local = favorite.added_at.with_timezone(&chrono::Local);
+                    let date_str = added_local.format("%Y-%m-%d %H:%M").to_string();
+                    
+                    ui.label(
+                        RichText::new(format!("Added: {}", date_str))
+                            .color(self.theme.secondary_text)
+                            .size(12.0)
+                            .italics()
+                    );
+                    
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // View comments button
+                        let comments_btn = ui.add_sized(
+                            [90.0, 24.0],
+                            egui::Button::new(
+                                RichText::new(format!("{} Comments", favorite.comments_count))
+                                    .size(13.0)
+                                    .color(self.theme.button_foreground)
+                            )
+                            .corner_radius(CornerRadius::same(4))
+                            .fill(self.theme.button_background)
+                        );
+                        
+                        if comments_btn.clicked() {
+                            view_story = true;
+                        }
+                        
+                        // Link button if URL exists
+                        if !favorite.url.is_empty() {
+                            ui.add_space(4.0);
+                            let link_btn = ui.add_sized(
+                                [30.0, 24.0],
+                                egui::Button::new(
+                                    RichText::new("↗")
+                                        .size(16.0)
+                                        .color(self.theme.button_foreground)
+                                )
+                                .corner_radius(CornerRadius::same(4))
+                                .fill(self.theme.button_background)
+                            );
+                            
+                            if link_btn.clicked() {
+                                let url = favorite.url.clone();
+                                self.open_link(&url);
+                            }
+                        }
+                        
+                        // Remove favorite button
+                        ui.add_space(4.0);
+                        let remove_btn = ui.add_sized(
+                            [30.0, 24.0],
+                            egui::Button::new(
+                                RichText::new("✖")
+                                    .size(16.0)
+                                    .color(self.theme.highlight)
+                            )
+                            .corner_radius(CornerRadius::same(4))
+                            .fill(self.theme.button_background)
+                        );
+                        
+                        if remove_btn.clicked() {
+                            // Store id for removal after ui rendering
+                            if let Err(e) = self.database.remove_favorite(&favorite.id) {
+                                eprintln!("Error removing favorite: {}", e);
+                            } else {
+                                // Reload favorites immediately
+                                self.reload_favorites();
+                            }
+                            self.needs_repaint = true;
+                        }
+                    });
+                });
+            });
+        });
+        
+        // Add separator between items
+        ui.add(egui::Separator::default().spacing(8.0));
+        
+        // Handle navigation
+        if view_story {
+            let story = HackerNewsItem::from(favorite.clone());
+            self.view_comments(story, false);
+            self.show_favorites_panel = false;
+            self.needs_repaint = true;
+        }
+    }
+    
+    #[allow(dead_code)]
+    fn render_favorite_item(&mut self, ui: &mut egui::Ui, favorite: &FavoriteStory) {
+        let story_clone = HackerNewsItem::from(favorite.clone());
+        let mut view_story = false;
+        
+        // Favorite item card
+        egui::Frame::default()
+            .fill(self.theme.card_background)
+            .corner_radius(CornerRadius::same(6))
+            .stroke(Stroke::new(1.0, self.theme.separator))
+            .inner_margin(egui::vec2(10.0, 10.0))
+            .outer_margin(egui::vec2(6.0, 4.0))
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    // Title with truncation if needed
+                    let title_label = ui.add(
+                        egui::Label::new(
+                            RichText::new(&favorite.title)
+                                .color(self.theme.text)
+                                .strong()
+                        )
+                        .sense(egui::Sense::click())
+                        .wrap()
+                    );
+                    
+                    // Handle click on title
+                    if title_label.clicked() {
+                        view_story = true;
+                    }
+                    
+                    if title_label.hovered() {
+                        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                    }
+                    
+                    // Meta row
+                    ui.horizontal(|ui| {
+                        // Score
+                        let score_color = self.theme.score_color(favorite.score);
+                        ui.label(
+                            RichText::new(format!("{} pts", favorite.score))
+                                .color(score_color)
+                                .size(13.0)
+                        );
+                        
+                        ui.label(RichText::new("|").color(self.theme.separator).size(13.0));
+                        
+                        // Domain
+                        if !favorite.domain.is_empty() {
+                            ui.label(
+                                RichText::new(&favorite.domain)
+                                    .color(self.theme.secondary_text)
+                                    .size(13.0)
+                                    .italics()
+                            );
+                            ui.label(RichText::new("|").color(self.theme.separator).size(13.0));
+                        }
+                        
+                        // Author
+                        ui.label(
+                            RichText::new(&format!("by {}", favorite.by))
+                                .color(self.theme.secondary_text)
+                                .size(13.0)
+                        );
+                    });
+                    
+                    // Action buttons
+                    ui.horizontal(|ui| {
+                        // Info about when added
+                        let added_local = favorite.added_at.with_timezone(&chrono::Local);
+                        let date_str = added_local.format("%Y-%m-%d %H:%M").to_string();
+                        
+                        ui.label(
+                            RichText::new(format!("Added: {}", date_str))
+                                .color(self.theme.secondary_text)
+                                .size(12.0)
+                                .italics()
+                        );
+                        
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            // View comments button
+                            let comments_btn = ui.add_sized(
+                                [90.0, 24.0],
+                                egui::Button::new(
+                                    RichText::new(format!("{} Comments", favorite.comments_count))
+                                        .size(13.0)
+                                        .color(self.theme.button_foreground)
+                                )
+                                .corner_radius(CornerRadius::same(4))
+                                .fill(self.theme.button_background)
+                            );
+                            
+                            if comments_btn.clicked() {
+                                view_story = true;
+                            }
+                            
+                            // Link button if URL exists
+                            if !favorite.url.is_empty() {
+                                ui.add_space(4.0);
+                                let link_btn = ui.add_sized(
+                                    [30.0, 24.0],
+                                    egui::Button::new(
+                                        RichText::new("↗")
+                                            .size(16.0)
+                                            .color(self.theme.button_foreground)
+                                    )
+                                    .corner_radius(CornerRadius::same(4))
+                                    .fill(self.theme.button_background)
+                                );
+                                
+                                if link_btn.clicked() {
+                                    self.open_link(&favorite.url);
+                                }
+                            }
+                            
+                            // Remove favorite button
+                            ui.add_space(4.0);
+                            let remove_btn = ui.add_sized(
+                                [30.0, 24.0],
+                                egui::Button::new(
+                                    RichText::new("✖")
+                                        .size(16.0)
+                                        .color(self.theme.highlight)
+                                )
+                                .corner_radius(CornerRadius::same(4))
+                                .fill(self.theme.button_background)
+                            );
+                            
+                            if remove_btn.clicked() {
+                                if let Err(e) = self.database.remove_favorite(&favorite.id) {
+                                    eprintln!("Error removing favorite: {}", e);
+                                } else {
+                                    self.reload_favorites();
+                                }
+                            }
+                        });
+                    });
+                });
+            });
+            
+        if view_story {
+            self.view_comments(story_clone, false);
+            // Close the favorites panel when selecting a story
+            if self.show_favorites_panel {
+                self.toggle_favorites_panel();
+            }
         }
     }
 }

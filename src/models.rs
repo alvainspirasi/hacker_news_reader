@@ -8,6 +8,8 @@ pub struct HackerNewsItem {
     pub score: i32,
     pub time_ago: String,
     pub comments_count: i32,
+    #[allow(dead_code)]
+    pub original_index: usize, // Track original index for stable numbering
 }
 
 #[derive(Debug, Clone)]

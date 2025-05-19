@@ -70,9 +70,19 @@ impl HackerNewsClient {
     }
     
     pub fn fetch_stories_by_tab(&self, tab: &str) -> Result<Vec<HackerNewsItem>> {
-        // First check the cache with a shorter timeout
-        // Only check cache for "hot" tab to keep it simple
-        if tab == "hot" {
+        // Default to page 1
+        self.fetch_stories_by_tab_and_page(tab, 1)
+    }
+    
+    // Method to fetch stories by page number (defaults to "hot" tab)
+    #[allow(dead_code)]
+    pub fn fetch_stories_by_page(&self, page: usize) -> Result<Vec<HackerNewsItem>> {
+        self.fetch_stories_by_tab_and_page("hot", page)
+    }
+    
+    pub fn fetch_stories_by_tab_and_page(&self, tab: &str, page: usize) -> Result<Vec<HackerNewsItem>> {
+        // Only check cache for "hot" tab page 1 to keep it simple
+        if tab == "hot" && page == 1 {
             if let Ok(cache) = self.cache.try_lock() {
                 if cache.is_stories_cache_valid(self.cache_ttl_secs) {
                     return Ok(cache.stories.clone());
@@ -81,10 +91,10 @@ impl HackerNewsClient {
         }
         
         // If cache check fails or cache is not valid, fetch fresh data
-        let stories = self.fetch_fresh_stories_by_tab(tab)?;
+        let stories = self.fetch_fresh_stories_by_tab_and_page(tab, page)?;
         
-        // Only cache "hot" tab to keep it simple
-        if tab == "hot" {
+        // Only cache "hot" tab page 1 to keep it simple
+        if tab == "hot" && page == 1 {
             // Now try to update the cache, but don't block if we can't get the lock
             if let Ok(mut cache) = self.cache.try_lock() {
                 cache.update_stories(stories.clone());
@@ -101,16 +111,37 @@ impl HackerNewsClient {
         self.fetch_fresh_stories_by_tab("hot")
     }
     
+    // Method to directly fetch stories by page without checking cache
+    #[allow(dead_code)]
+    pub fn fetch_fresh_stories_by_page(&self, page: usize) -> Result<Vec<HackerNewsItem>> {
+        self.fetch_fresh_stories_by_tab_and_page("hot", page)
+    }
+    
     // Method to fetch stories from a specific tab
     pub fn fetch_fresh_stories_by_tab(&self, tab: &str) -> Result<Vec<HackerNewsItem>> {
-        let url = match tab {
+        // Default to page 1
+        self.fetch_fresh_stories_by_tab_and_page(tab, 1)
+    }
+    
+    pub fn fetch_fresh_stories_by_tab_and_page(&self, tab: &str, page: usize) -> Result<Vec<HackerNewsItem>> {
+        let base_url = match tab {
             "hot" => "https://news.ycombinator.com/",
             "new" => "https://news.ycombinator.com/newest",
             "show" => "https://news.ycombinator.com/show",
+            "ask" => "https://news.ycombinator.com/ask",
+            "jobs" => "https://news.ycombinator.com/jobs",
+            "best" => "https://news.ycombinator.com/best",
             _ => "https://news.ycombinator.com/", // Default to hot
         };
         
-        let response = self.client.get(url).send()?;
+        // Add page parameter if page > 1
+        let url = if page > 1 {
+            format!("{}?p={}", base_url, page)
+        } else {
+            base_url.to_string()
+        };
+        
+        let response = self.client.get(&url).send()?;
 
         let html = response.text()?;
         
@@ -118,7 +149,13 @@ impl HackerNewsClient {
         let _ = std::fs::write("hn_debug.html", &html);
         
         let stories = Self::parse_stories(&html)?;
-        println!("Successfully loaded {} stories from {} tab", stories.len(), tab);
+        // Debug output turned off
+        // println!("SUCCESSFULLY LOADED {} STORIES FROM {} TAB, PAGE {}", stories.len(), tab, page);
+        
+        // Debug output turned off - story titles
+        // for (i, story) in stories.iter().enumerate() {
+        //     println!("  Story {}: {} (by {})", i+1, story.title, story.by);
+        // }
         
         Ok(stories)
     }
@@ -157,6 +194,18 @@ impl HackerNewsClient {
     }
     
     fn parse_stories(html: &str) -> Result<Vec<HackerNewsItem>> {
+        // Extract the page number from the URL if present (to calculate correct indices)
+        let _page_number = if html.contains("?p=") {
+            // Try to extract page number from HTML by looking for links containing ?p=
+            if let Some(start_idx) = html.find("?p=") {
+                let page_str = &html[start_idx + 3..start_idx + 5]; // Get up to 2 digits after ?p=
+                page_str.chars().take_while(|c| c.is_digit(10)).collect::<String>().parse::<usize>().unwrap_or(1)
+            } else {
+                1 // Default to page 1 if not found
+            }
+        } else {
+            1 // Default to page 1 if no page parameter
+        };
         let document = Html::parse_document(html);
         let story_selector = match Selector::parse(".athing") {
             Ok(selector) => selector,
@@ -281,6 +330,12 @@ impl HackerNewsClient {
                 })
                 .unwrap_or(0);
             
+            // Calculate the original index based on page and position
+            // For page 1, indices are 0, 1, 2, ..., 29
+            // For page 2, indices are 30, 31, 32, ..., 59
+            // IMPORTANT: Adjust to 0-based for proper display indexing
+            let original_index = i;
+            
             stories.push(HackerNewsItem {
                 id,
                 title,
@@ -290,6 +345,7 @@ impl HackerNewsClient {
                 score,
                 time_ago,
                 comments_count,
+                original_index,
             });
         }
         
