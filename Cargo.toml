@@ -17,3 +17,4 @@ rusqlite = { version = "0.30.0", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs-next = "2.0.0"
 image = "0.25.1" # Added for icon loading
+md5 = "0.7.0" # For HTML caching optimization

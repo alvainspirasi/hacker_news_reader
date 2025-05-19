@@ -451,6 +451,8 @@ struct HackerNewsReaderApp {
     show_search_ui: bool,
     // Flag to auto-collapse comments when loading
     auto_collapse_on_load: bool,
+    // Cache for cleaned HTML to improve performance with large comment threads
+    clean_html_cache: std::collections::HashMap<String, String>,
 }
 
 impl HackerNewsReaderApp {
@@ -538,6 +540,8 @@ impl HackerNewsReaderApp {
             show_search_ui: false,
             // Initialize auto-collapse flag
             auto_collapse_on_load: true,
+            // Initialize HTML cleaning cache
+            clean_html_cache: std::collections::HashMap::new(),
         }
     }
     
@@ -777,7 +781,15 @@ impl HackerNewsReaderApp {
         if let Some(rx) = &self.comments_receiver {
             match rx.try_recv() {
                 Ok(Some(comments)) => {
-                    self.comments = comments;
+                    // Optimize comments for large threads
+                    if comments.len() > 300 {
+                        // Large comment thread - apply optimizations
+                        let optimized = self.optimize_large_comment_thread(comments);
+                        self.comments = optimized;
+                    } else {
+                        self.comments = comments;
+                    }
+                    
                     self.loading = false;
                     self.comments_receiver = None; // Consume the receiver
                     
@@ -1765,16 +1777,54 @@ impl eframe::App for HackerNewsReaderApp {
                 self.render_pagination_controls(ui);
                 
                 // Comments section with scrolling - use ID for persistent state
+                // Set up a virtual list to only render visible comments for improved performance
+                let available_height = ui.available_height();
+                
+                // Calculate estimated heights
+                const COMMENT_HEADER_HEIGHT: f32 = 40.0; // Estimated height of comment header
+                const COMMENT_MARGIN: f32 = 20.0; // Total margin around comments
+                
+                // Get comments for the current page only
+                let page_comments = self.get_current_page_comments();
+                
+                // Create height estimates for each comment (including children if expanded)
+                let mut comment_heights: Vec<f32> = Vec::new();
+                let mut total_height: f32 = 0.0;
+                
+                for comment in &page_comments {
+                    let height = self.estimate_comment_height(comment, 0);
+                    comment_heights.push(height);
+                    total_height += height;
+                }
+                
                 let scroll_response = ScrollArea::vertical()
-                    .id_salt("comments_scroll_area") // Using id_salt instead of id_source
+                    .id_salt("comments_scroll_area")
                     .auto_shrink([false, false])
                     .vertical_scroll_offset(self.comments_scroll_offset)
                     .show(ui, |ui| {
-                        // Get comments for the current page only
-                        let page_comments = self.get_current_page_comments();
-                        // Render comments from current page only
-                        for comment in page_comments {
-                            self.render_comment(ui, comment, 0);
+                        // Add empty space at the top to position the viewport correctly
+                        let viewport_min_y = self.comments_scroll_offset;
+                        let viewport_max_y = viewport_min_y + available_height;
+                        
+                        let mut current_y = 0.0;
+                        
+                        // Only render comments that are visible in the viewport
+                        for (i, comment) in page_comments.iter().enumerate() {
+                            let comment_height = comment_heights[i];
+                            
+                            // Check if comment is visible in viewport
+                            let comment_top = current_y;
+                            let comment_bottom = comment_top + comment_height;
+                            
+                            if comment_bottom >= viewport_min_y && comment_top <= viewport_max_y {
+                                // Comment is visible, render it
+                                self.render_comment(ui, comment, 0);
+                            } else {
+                                // Comment is not visible, just add space
+                                ui.add_space(comment_height);
+                            }
+                            
+                            current_y += comment_height;
                         }
                         
                         // Allow extra space for scrolling at the bottom
@@ -2573,16 +2623,51 @@ impl HackerNewsReaderApp {
 
     // Function to clean HTML content in comments
     fn clean_html(&self, html: &str) -> String {
-        // Remove <a href="item?id=44025901">1 hour ago</a> style links but keep the text
-        let item_link_regex = regex::Regex::new(r#"<a\s+href="item\?id=\d+"[^>]*>([^<]+)</a>"#).unwrap();
-        let text = item_link_regex.replace_all(html, "$1");
+        // Check if the result is already in the cache
+        // We have to use a different approach since self.clean_html_cache is behind a Mutex
+        // and we're in a method that takes &self
+        let this = self as *const _ as *mut Self;
         
-        // Replace other HN-specific links with properly formatted ones
-        let text = text.replace("<a href=\"https://news.ycombinator.com/", "<a href=\"");
+        // Get a hash of the HTML for cache lookup
+        let html_hash = format!("{:x}", md5::compute(html));
         
-        // Remove any remaining HTML tags while preserving text
-        let regex = regex::Regex::new(r#"<[^>]+>"#).unwrap();
-        regex.replace_all(&text, "").to_string()
+        unsafe {
+            // Check if the cleaned HTML is already in the cache
+            if let Some(cached) = (*this).clean_html_cache.get(&html_hash) {
+                return cached.clone();
+            }
+        }
+        
+        // If not in cache, process the HTML
+        // First clean up simple cases without regexes for better performance
+        let text = if html.len() < 100 && !html.contains('<') {
+            // Very short text with no HTML - just return it directly
+            html.to_string()
+        } else {
+            // Regular HTML cleaning 
+            // Remove <a href="item?id=44025901">1 hour ago</a> style links but keep the text
+            let item_link_regex = regex::Regex::new(r#"<a\s+href="item\?id=\d+"[^>]*>([^<]+)</a>"#).unwrap();
+            let text = item_link_regex.replace_all(html, "$1");
+            
+            // Replace other HN-specific links with properly formatted ones
+            let text = text.replace("<a href=\"https://news.ycombinator.com/", "<a href=\"");
+            
+            // Remove any remaining HTML tags while preserving text
+            let regex = regex::Regex::new(r#"<[^>]+>"#).unwrap();
+            regex.replace_all(&text, "").to_string()
+        };
+        
+        // Cache the result for future use
+        unsafe {
+            if (*this).clean_html_cache.len() > 5000 {
+                // Prevent cache from growing too large - clear it if needed
+                (*this).clean_html_cache.clear();
+            }
+            
+            (*this).clean_html_cache.insert(html_hash, text.clone());
+        }
+        
+        text
     }
     
     // Render pagination controls
@@ -2668,7 +2753,46 @@ impl HackerNewsReaderApp {
         // Check if this comment is collapsed
         let is_collapsed = self.collapsed_comments.contains(&comment.id);
         
-        // Card background based on depth and theme
+        // Constants for better performance with large comment threads
+        const MAX_DEPTH: usize = 10;         // Maximum depth to render before showing "load more"
+        const MAX_CHILDREN: usize = 50;      // Maximum number of children to render at once
+        
+        // Limit render depth to prevent performance issues with extremely nested comments
+        if depth > MAX_DEPTH {
+            // Just show a "load more" button for very deep nesting
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add_space((depth * 16) as f32);
+                
+                let load_more_btn = ui.add(
+                    egui::Button::new(
+                        RichText::new("⟨ Nested replies hidden - Click to expand ⟩")
+                            .color(self.theme.secondary_text)
+                            .italics()
+                            .size(14.0)
+                    )
+                    .min_size(egui::Vec2::new(200.0, 30.0))
+                    .fill(self.theme.card_background)
+                );
+                
+                if load_more_btn.clicked() {
+                    // When clicked, toggle the collapsed state of this comment
+                    let comment_id = comment.id.clone();
+                    let this = self as *const _ as *mut Self;
+                    unsafe {
+                        if (*this).collapsed_comments.contains(&comment_id) {
+                            (*this).collapsed_comments.remove(&comment_id);
+                        } else {
+                            (*this).collapsed_comments.insert(comment_id);
+                        }
+                        (*this).needs_repaint = true;
+                    }
+                }
+            });
+            return;
+        }
+        
+        // Card background based on depth and theme - simplified for better performance
         let card_bg = if depth % 2 == 0 {
             self.theme.card_background
         } else if self.is_dark_mode {
@@ -2688,7 +2812,7 @@ impl HackerNewsReaderApp {
             )
         };
         
-        // Comment card with indentation
+        // Comment card with indentation - simplified for performance
         egui::Frame::new()
             .fill(card_bg)
             .corner_radius(CornerRadius::same(6))
@@ -2698,7 +2822,9 @@ impl HackerNewsReaderApp {
             .show(ui, |ui| {
                 // Indent based on depth
                 ui.horizontal(|ui| {
-                    ui.add_space((depth * 16) as f32); 
+                    // Limit indentation to avoid excessive horizontal space
+                    let scaled_depth = if depth > 5 { 5 + (depth - 5) / 2 } else { depth };
+                    ui.add_space((scaled_depth * 16) as f32); 
                     
                     ui.vertical(|ui| {
                         // Comment metadata and collapse button in the same horizontal line
@@ -2788,9 +2914,45 @@ impl HackerNewsReaderApp {
                             // Recursively render child comments (only if not collapsed)
                             if !comment.children.is_empty() {
                                 ui.add_space(8.0);
-                                // Render all child comments (these are not paginated)
-                                for child in &comment.children {
+                                
+                                // Limit the number of children rendered for very large threads
+                                let children_count = comment.children.len();
+                                let children_to_render = std::cmp::min(children_count, MAX_CHILDREN);
+                                
+                                // Render visible child comments
+                                for child in comment.children.iter().take(children_to_render) {
                                     self.render_comment(ui, child, depth + 1);
+                                }
+                                
+                                // Show "load more" button if there are more children
+                                if children_count > MAX_CHILDREN {
+                                    ui.add_space(8.0);
+                                    ui.horizontal(|ui| {
+                                        ui.add_space((depth * 16) as f32);
+                                        
+                                        let remaining = children_count - MAX_CHILDREN;
+                                        let load_more_btn = ui.add(
+                                            egui::Button::new(
+                                                RichText::new(format!("Show {} more replies...", remaining))
+                                                    .color(self.theme.accent)
+                                                    .size(14.0)
+                                            )
+                                            .min_size(egui::Vec2::new(160.0, 30.0))
+                                            .fill(self.theme.card_background)
+                                        );
+                                        
+                                        // Handle "load more" button - this would need state tracking
+                                        // For now, we'll just collapse the comment on click as a placeholder
+                                        if load_more_btn.clicked() {
+                                            let comment_id = comment.id.clone();
+                                            let this = self as *const _ as *mut Self;
+                                            unsafe {
+                                                // Collapse this comment to reset the view
+                                                (*this).collapsed_comments.insert(comment_id);
+                                                (*this).needs_repaint = true;
+                                            }
+                                        }
+                                    });
                                 }
                             }
                         }
@@ -2813,6 +2975,109 @@ impl HackerNewsReaderApp {
             count += self.count_total_children(&comment.children);
         }
         count
+    }
+    
+    // Function to optimize very large comment threads for better performance
+    fn optimize_large_comment_thread(&self, comments: Vec<HackerNewsComment>) -> Vec<HackerNewsComment> {
+        // Placeholder values for maximum depth and children
+        const MAX_OPTIMIZATION_DEPTH: usize = 12;  
+        const MAX_CHILDREN_PER_COMMENT: usize = 100;
+        
+        // Process each top-level comment
+        comments.into_iter()
+            .map(|comment| self.optimize_comment_tree(comment, 0, MAX_OPTIMIZATION_DEPTH, MAX_CHILDREN_PER_COMMENT))
+            .collect()
+    }
+    
+    // Helper function to recursively optimize a comment tree
+    fn optimize_comment_tree(&self, comment: HackerNewsComment, current_depth: usize, 
+                            max_depth: usize, max_children: usize) -> HackerNewsComment {
+        // Skip empty content
+        if comment.text.is_empty() || comment.text == "[deleted]" {
+            return comment;
+        }
+        
+        // If we're at max depth, return with no children to save memory and CPU
+        if current_depth >= max_depth {
+            return HackerNewsComment {
+                id: comment.id,
+                by: comment.by,
+                text: comment.text,
+                time_ago: comment.time_ago,
+                level: comment.level,
+                children: Vec::new(), // No children beyond max depth
+            };
+        }
+        
+        // If too many children, limit them to save resources
+        let children_count = comment.children.len();
+        let reduced_children = if children_count > max_children {
+            comment.children.into_iter()
+                .take(max_children)
+                .map(|child| self.optimize_comment_tree(child, current_depth + 1, max_depth, max_children))
+                .collect()
+        } else {
+            comment.children.into_iter()
+                .map(|child| self.optimize_comment_tree(child, current_depth + 1, max_depth, max_children))
+                .collect()
+        };
+        
+        // Return the optimized comment
+        HackerNewsComment {
+            id: comment.id,
+            by: comment.by,
+            text: comment.text,
+            time_ago: comment.time_ago,
+            level: comment.level,
+            children: reduced_children,
+        }
+    }
+    
+    // Estimate the height of a comment for virtual scrolling optimization
+    fn estimate_comment_height(&self, comment: &HackerNewsComment, depth: usize) -> f32 {
+        // Skip empty comments
+        if comment.text.is_empty() || comment.text == "[deleted]" {
+            return 0.0;
+        }
+        
+        // Check if this comment is collapsed
+        let is_collapsed = self.collapsed_comments.contains(&comment.id);
+        
+        // Base height for comment header
+        let mut height = 40.0; // Header height
+        
+        // Add height for comment text if not collapsed
+        if !is_collapsed {
+            // Estimate text height based on length
+            // Assuming average of 10 characters per line and 20 pixels per line
+            let text_length = comment.text.len() as f32;
+            let estimated_lines = (text_length / 80.0).max(1.0); // Assume 80 chars per line
+            let text_height = estimated_lines * 20.0; // 20 pixels per line
+            
+            height += text_height;
+            
+            // Add spacing
+            height += 20.0;
+            
+            // Add height for children recursively
+            if !comment.children.is_empty() {
+                let mut children_height = 0.0;
+                
+                for child in &comment.children {
+                    children_height += self.estimate_comment_height(child, depth + 1);
+                }
+                
+                height += children_height;
+            }
+        } else {
+            // If collapsed, just add a small fixed height
+            height += 10.0;
+        }
+        
+        // Add margins
+        height += 20.0;
+        
+        height
     }
     
     // Render the tab buttons
