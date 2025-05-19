@@ -10,6 +10,8 @@ pub struct HackerNewsClient {
     client: Client,
     pub(crate) cache: Arc<Mutex<StoriesCache>>,
     pub(crate) cache_ttl_secs: u64,
+    // Store the parameters for the next page of the "new" tab
+    pub(crate) next_page_params: std::sync::Mutex<Option<(String, String)>>,
 }
 
 impl HackerNewsClient {
@@ -30,6 +32,7 @@ impl HackerNewsClient {
             client,
             cache,
             cache_ttl_secs: 300, // 5 minutes TTL by default
+            next_page_params: std::sync::Mutex::new(None),
         }
     }
     
@@ -123,6 +126,36 @@ impl HackerNewsClient {
         self.fetch_fresh_stories_by_tab_and_page(tab, 1)
     }
     
+    // Helper method to extract "More" link parameters from HTML
+    fn extract_more_link_params(&self, html: &str) -> Option<(String, String)> {
+        // Look for the "More" link which contains the "next" and "n" parameters
+        if let Some(more_link_pos) = html.find("class=\"morelink\"") {
+            // Look for the href attribute before the class
+            let href_start = html[..more_link_pos].rfind("href=\"")?;
+            let href_end = html[href_start + 6..].find("\"")?;
+            
+            // Extract the href value
+            let href = &html[href_start + 6..href_start + 6 + href_end];
+            
+            // Parse the href to extract the next and n parameters
+            if href.contains("newest?next=") && href.contains("&n=") {
+                // Extract the next parameter
+                let next_start = href.find("next=")?;
+                let next_end = href[next_start + 5..].find("&")?;
+                let next_param = &href[next_start + 5..next_start + 5 + next_end];
+                
+                // Extract the n parameter
+                let n_start = href.find("&n=")?;
+                let n_param = &href[n_start + 3..];
+                
+                return Some((next_param.to_string(), n_param.to_string()));
+            }
+        }
+        
+        None
+    }
+    
+
     pub fn fetch_fresh_stories_by_tab_and_page(&self, tab: &str, page: usize) -> Result<Vec<HackerNewsItem>> {
         let base_url = match tab {
             "hot" => "https://news.ycombinator.com/",
@@ -136,7 +169,35 @@ impl HackerNewsClient {
         
         // Add page parameter if page > 1
         let url = if page > 1 {
-            format!("{}?p={}", base_url, page)
+            // Special handling for "new" tab which uses a different pagination mechanism
+            if tab == "new" {
+                // For "new" tab pagination, we need to use the format:
+                // newest?next=ITEM_ID&n=N
+                // where n increments by 30 for each page (n=31, n=61, n=91, etc.)
+                
+                // For page 2, we use a simple n=31 approach if we don't have stored params
+                if page == 2 {
+                    format!("{}?n=31", base_url)
+                } else {
+                    // For pages > 2, we should have extracted parameters from the previous page
+                    if let Ok(params_guard) = self.next_page_params.lock() {
+                        if let Some((next_param, n_param)) = params_guard.as_ref() {
+                            format!("{}?next={}&n={}", base_url, next_param, n_param)
+                        } else {
+                            // Fallback if we don't have stored params
+                            let n_param = 1 + (page - 1) * 30;
+                            format!("{}?n={}", base_url, n_param)
+                        }
+                    } else {
+                        // Fallback if we can't get the lock
+                        let n_param = 1 + (page - 1) * 30;
+                        format!("{}?n={}", base_url, n_param)
+                    }
+                }
+            } else {
+                // For other tabs, use the standard p parameter
+                format!("{}?p={}", base_url, page)
+            }
         } else {
             base_url.to_string()
         };
@@ -147,6 +208,16 @@ impl HackerNewsClient {
         
         // Save the HTML to a file for debugging
         let _ = std::fs::write("hn_debug.html", &html);
+        
+        // If this is the "new" tab, try to extract the "More" link parameters for next page
+        if tab == "new" {
+            if let Some((next_param, n_param)) = self.extract_more_link_params(&html) {
+                // Store the parameters for the next page
+                if let Ok(mut params_guard) = self.next_page_params.lock() {
+                    *params_guard = Some((next_param, n_param));
+                }
+            }
+        }
         
         let stories = Self::parse_stories(&html)?;
         // Debug output turned off
