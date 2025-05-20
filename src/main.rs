@@ -870,9 +870,21 @@ impl HackerNewsReaderApp {
                     self.loading = false;
                     self.comments_receiver = None; // Consume the receiver
                     
-                    // Auto-collapse all top-level comments if the flag is set
+                    // Auto-collapse top-level comments if the flag is set, but unfold the first one
                     if self.auto_collapse_on_load {
-                        self.collapse_all_top_level_comments();
+                        // Only process if we have comments
+                        if !self.comments.is_empty() {
+                            // First, collapse all top-level comments
+                            for comment in &self.comments {
+                                self.collapsed_comments.insert(comment.id.clone());
+                            }
+                            
+                            // Then, if there's at least one comment, unfold the first one
+                            if let Some(first_comment) = self.comments.first() {
+                                self.collapsed_comments.remove(&first_comment.id);
+                            }
+                        }
+                        
                         // Only auto-collapse once when comments are first loaded
                         self.auto_collapse_on_load = false;
                     }
