@@ -2520,19 +2520,19 @@ impl HackerNewsReaderApp {
             }
             
             // Arrow Up - Scroll up
-            // if input.5 {
-            //     self.comments_scroll_offset -= SCROLL_AMOUNT;
-            //     if self.comments_scroll_offset < 0.0 {
-            //         self.comments_scroll_offset = 0.0;
-            //     }
-            //     self.needs_repaint = true;
-            // }
+            if input.5 {
+                self.comments_scroll_offset -= SCROLL_AMOUNT;
+                if self.comments_scroll_offset < 0.0 {
+                    self.comments_scroll_offset = 0.0;
+                }
+                self.needs_repaint = true;
+            }
             
-            // // Arrow Down - Scroll down
-            // if input.6 {
-            //     self.comments_scroll_offset += SCROLL_AMOUNT;
-            //     self.needs_repaint = true;
-            // }
+            // Arrow Down - Scroll down
+            if input.6 {
+                self.comments_scroll_offset += SCROLL_AMOUNT;
+                self.needs_repaint = true;
+            }
             
             // Home - Scroll to top
             if input.7 && !input.2 { // Home without Shift (Shift+Home is for pagination)
