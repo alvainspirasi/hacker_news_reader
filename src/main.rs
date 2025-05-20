@@ -495,6 +495,8 @@ struct HackerNewsReaderApp {
     // Status message for user feedback
     status_message: String,
     last_status_update_time: f64,
+    // Focus control
+    request_search_focus: bool,
     // Flag to auto-collapse comments when loading
     auto_collapse_on_load: bool,
     // Cache for cleaned HTML to improve performance with large comment threads
@@ -605,6 +607,7 @@ impl HackerNewsReaderApp {
             show_done_only: false,
             status_message: String::new(),
             last_status_update_time: 0.0,
+            request_search_focus: false,
             // Initialize auto-collapse flag
             auto_collapse_on_load: true,
             // Initialize HTML cleaning cache
@@ -1144,7 +1147,8 @@ impl HackerNewsReaderApp {
             // Clear search and filters when hiding the search UI
             self.reset_all_filters();
         } else {
-            // Focus the search field when showing it
+            // Request focus on the search field when showing it
+            self.request_search_focus = true;
             self.needs_repaint = true;
         }
     }
@@ -1661,6 +1665,16 @@ impl eframe::App for HackerNewsReaderApp {
                     ui.add_space(8.0);
                     
                     // Text field for search query
+                    // If focus was requested, request it from egui
+                    let search_input_id = egui::Id::new("search_input");
+                    if self.request_search_focus {
+                        // Request focus on the search input
+                        ui.ctx().memory_mut(|mem| mem.request_focus(search_input_id));
+                        // Also clear the current search to provide a fresh start
+                        self.search_query.clear();
+                        self.request_search_focus = false;
+                    }
+                    
                     let text_edit = ui.add_sized(
                         [ui.available_width() - 260.0, 32.0], // Make room for filter buttons
                         egui::TextEdit::singleline(&mut self.search_query)
@@ -1668,10 +1682,10 @@ impl eframe::App for HackerNewsReaderApp {
                             .text_color(self.theme.text)
                             .cursor_at_end(true)
                             .frame(true)
-                            .id(egui::Id::new("search_input")) // Add ID for focus detection
+                            .id(search_input_id) // Use the same ID for focus control
                     );
                     
-                    // Focus the text edit on first frame
+                    // If the text edit gained focus, update UI
                     if text_edit.gained_focus() {
                         self.needs_repaint = true;
                     }
