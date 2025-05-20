@@ -2334,13 +2334,13 @@ impl HackerNewsReaderApp {
             // Only process if we have stories
             if !stories_to_display.is_empty() {
                 // Constants for story card height approximation
-                const APPROX_STORY_HEIGHT: f32 = 150.0; // Approximate height of a story card in pixels
-                const APPROX_STORY_MARGIN: f32 = 20.0;  // Approximate margin between stories
+                const APPROX_STORY_HEIGHT: f32 = 85.0; // Approximate height of a story card in pixels
+                const APPROX_STORY_MARGIN: f32 = 7.0;  // Approximate margin between stories
                 const VERTICAL_OFFSET_BUFFER: f32 = 100.0; // Additional buffer to ensure visibility
                 
                 // Helper function to calculate the scroll position to center the story in the viewport
                 let center_story_in_viewport = |idx: usize| {
-                    let story_position = (idx as f32) * (APPROX_STORY_HEIGHT + APPROX_STORY_MARGIN);
+                    let story_position = (idx as f32 - 1.0) * (APPROX_STORY_HEIGHT + APPROX_STORY_MARGIN);
                     let viewport_height = ctx.available_rect().height();
                     let center_position = story_position - (viewport_height / 2.0) + (APPROX_STORY_HEIGHT / 2.0);
                     center_position.max(0.0)
@@ -2360,7 +2360,7 @@ impl HackerNewsReaderApp {
                             // Select the first story if none is selected
                             self.selected_story_index = Some(0);
                             // Center the first story in the viewport
-                            self.stories_scroll_offset = center_story_in_viewport(0);
+                            // self.stories_scroll_offset = center_story_in_viewport(0);
                         }
                         _ => {}  // At the last story, do nothing
                     }
@@ -2384,7 +2384,7 @@ impl HackerNewsReaderApp {
                         self.selected_story_index = Some(last_idx);
                         
                         // Center the last story in the viewport
-                        self.stories_scroll_offset = center_story_in_viewport(last_idx);
+                        // self.stories_scroll_offset = center_story_in_viewport(last_idx);
                     }
                     self.needs_repaint = true;
                     return;
@@ -2520,19 +2520,19 @@ impl HackerNewsReaderApp {
             }
             
             // Arrow Up - Scroll up
-            if input.5 {
-                self.comments_scroll_offset -= SCROLL_AMOUNT;
-                if self.comments_scroll_offset < 0.0 {
-                    self.comments_scroll_offset = 0.0;
-                }
-                self.needs_repaint = true;
-            }
+            // if input.5 {
+            //     self.comments_scroll_offset -= SCROLL_AMOUNT;
+            //     if self.comments_scroll_offset < 0.0 {
+            //         self.comments_scroll_offset = 0.0;
+            //     }
+            //     self.needs_repaint = true;
+            // }
             
-            // Arrow Down - Scroll down
-            if input.6 {
-                self.comments_scroll_offset += SCROLL_AMOUNT;
-                self.needs_repaint = true;
-            }
+            // // Arrow Down - Scroll down
+            // if input.6 {
+            //     self.comments_scroll_offset += SCROLL_AMOUNT;
+            //     self.needs_repaint = true;
+            // }
             
             // Home - Scroll to top
             if input.7 && !input.2 { // Home without Shift (Shift+Home is for pagination)
