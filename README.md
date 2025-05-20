@@ -84,6 +84,9 @@ The compiled binary will be available at `target/release/hacker_news_reader`.
 - **Ctrl+R**: Refresh current view and bypass cache.
 - **Escape**: Close search interface.
 - **1-6 Number Keys**: Switch between tabs (1=Hot, 2=New, 3=Show, 4=Ask, 5=Jobs, 6=Best).
+- **T**: Mark selected story as Todo (for later reading).
+- **D**: Mark selected story as Done (or toggle back to not done).
+- **Ctrl+O**: When viewing comments, open the article in your browser.
 
 ### Story List
 

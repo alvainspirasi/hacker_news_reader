@@ -2036,109 +2036,6 @@ impl eframe::App for HackerNewsReaderApp {
                                     self.pending_favorites_toggle = Some(story.id.clone());
                                 }
                                 
-                                // Add todo button
-                                ui.add_space(8.0);
-                                
-                                // Is this story already in the todo list?
-                                let is_todo = self.is_todo(story_id);
-                                let todo_color = if is_todo {
-                                    Color32::from_rgb(46, 204, 113) // Green for todo
-                                } else {
-                                    self.theme.secondary_text
-                                };
-                                
-                                let todo_btn = ui.add_sized(
-                                    [55.0, 30.0],
-                                    egui::Button::new(
-                                        RichText::new("TODO")
-                                            .size(14.0)
-                                            .color(todo_color)
-                                    )
-                                    .corner_radius(CornerRadius::same(6))
-                                    .fill(self.theme.button_background)
-                                );
-                                
-                                // Add tooltip for the todo button
-                                if todo_btn.hovered() {
-                                    let tooltip_pos = todo_btn.rect.left_top() + egui::vec2(0.0, -30.0);
-                                    
-                                    egui::Area::new(egui::Id::new("todo_tooltip_area").with(story.id.clone()))
-                                        .order(egui::Order::Tooltip)
-                                        .fixed_pos(tooltip_pos)
-                                        .show(ui.ctx(), |ui| {
-                                            egui::Frame::popup(ui.style())
-                                                .fill(self.theme.card_background)
-                                                .stroke(Stroke::new(1.0, self.theme.separator))
-                                                .corner_radius(CornerRadius::same(6))
-                                                .show(ui, |ui| {
-                                                    ui.label(
-                                                        RichText::new(if is_todo {
-                                                            "Already in your todo list"
-                                                        } else {
-                                                            "Add to your todo list"
-                                                        })
-                                                        .color(self.theme.text)
-                                                        .size(14.0)
-                                                    );
-                                                });
-                                        });
-                                }
-                                
-                                if todo_btn.clicked() {
-                                    self.pending_todo_toggle = Some(story.id.clone());
-                                }
-                                
-                                // Add done button
-                                ui.add_space(8.0);
-                                
-                                // Is this story marked as done?
-                                let is_done = self.is_done(story_id);
-                                let done_color = if is_done {
-                                    Color32::from_rgb(52, 152, 219) // Blue for done
-                                } else {
-                                    self.theme.secondary_text
-                                };
-                                
-                                let done_btn = ui.add_sized(
-                                    [55.0, 30.0],
-                                    egui::Button::new(
-                                        RichText::new("DONE")
-                                            .size(14.0)
-                                            .color(done_color)
-                                    )
-                                    .corner_radius(CornerRadius::same(6))
-                                    .fill(self.theme.button_background)
-                                );
-                                
-                                // Add tooltip for the done button
-                                if done_btn.hovered() {
-                                    let tooltip_pos = done_btn.rect.left_top() + egui::vec2(0.0, -30.0);
-                                    
-                                    egui::Area::new(egui::Id::new("done_tooltip_area").with(story.id.clone()))
-                                        .order(egui::Order::Tooltip)
-                                        .fixed_pos(tooltip_pos)
-                                        .show(ui.ctx(), |ui| {
-                                            egui::Frame::popup(ui.style())
-                                                .fill(self.theme.card_background)
-                                                .stroke(Stroke::new(1.0, self.theme.separator))
-                                                .corner_radius(CornerRadius::same(6))
-                                                .show(ui, |ui| {
-                                                    ui.label(
-                                                        RichText::new(if is_done {
-                                                            "Mark as not done"
-                                                        } else {
-                                                            "Mark as done"
-                                                        })
-                                                        .color(self.theme.text)
-                                                        .size(14.0)
-                                                    );
-                                                });
-                                        });
-                                }
-                                
-                                if done_btn.clicked() {
-                                    self.pending_done_toggle = Some(story.id.clone());
-                                }
                             });
                         });
                     });
@@ -3068,6 +2965,19 @@ impl HackerNewsReaderApp {
             return;
         }
         
+        // Add keyboard shortcuts info at the top
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new("Keyboard shortcuts: T to mark as Todo, D to mark as Done")
+                        .color(self.theme.secondary_text)
+                        .size(13.0)
+                        .italics()
+                );
+            });
+        });
+        ui.add_space(8.0);
+        
         // Calculate proper starting rank for display (always start from 1)
         let mut current_rank = 1;
         
@@ -3300,109 +3210,6 @@ impl HackerNewsReaderApp {
                                 self.pending_favorites_toggle = Some(story.id.clone());
                             }
                             
-                            // Todo button
-                            ui.add_space(8.0);
-                            
-                            // Is this story already in the todo list?
-                            let is_todo = self.is_todo(&story.id);
-                            let todo_color = if is_todo {
-                                Color32::from_rgb(46, 204, 113) // Green for todo
-                            } else {
-                                self.theme.secondary_text
-                            };
-                            
-                            let todo_btn = ui.add_sized(
-                                [55.0, 28.0],
-                                egui::Button::new(
-                                    RichText::new("TODO")
-                                        .size(14.0)
-                                        .color(todo_color)
-                                )
-                                .corner_radius(CornerRadius::same(6))
-                                .fill(self.theme.button_background)
-                            );
-                            
-                            // Add tooltip for the todo button
-                            if todo_btn.hovered() {
-                                let tooltip_pos = todo_btn.rect.left_top() + egui::vec2(0.0, -30.0);
-                                
-                                egui::Area::new(egui::Id::new("todo_tooltip_area").with(story.id.clone()))
-                                    .order(egui::Order::Tooltip)
-                                    .fixed_pos(tooltip_pos)
-                                    .show(ui.ctx(), |ui| {
-                                        egui::Frame::popup(ui.style())
-                                            .fill(self.theme.card_background)
-                                            .stroke(Stroke::new(1.0, self.theme.separator))
-                                            .corner_radius(CornerRadius::same(6))
-                                            .show(ui, |ui| {
-                                                ui.label(
-                                                    RichText::new(if is_todo {
-                                                        "Already in your todo list"
-                                                    } else {
-                                                        "Add to your todo list"
-                                                    })
-                                                    .color(self.theme.text)
-                                                    .size(14.0)
-                                                );
-                                            });
-                                    });
-                            }
-                            
-                            if todo_btn.clicked() {
-                                self.pending_todo_toggle = Some(story.id.clone());
-                            }
-                            
-                            // Done button
-                            ui.add_space(8.0);
-                            
-                            // Is this story marked as done?
-                            let is_done = self.is_done(&story.id);
-                            let done_color = if is_done {
-                                Color32::from_rgb(52, 152, 219) // Blue for done
-                            } else {
-                                self.theme.secondary_text
-                            };
-                            
-                            let done_btn = ui.add_sized(
-                                [55.0, 28.0],
-                                egui::Button::new(
-                                    RichText::new("DONE")
-                                        .size(14.0)
-                                        .color(done_color)
-                                )
-                                .corner_radius(CornerRadius::same(6))
-                                .fill(self.theme.button_background)
-                            );
-                            
-                            // Add tooltip for the done button
-                            if done_btn.hovered() {
-                                let tooltip_pos = done_btn.rect.left_top() + egui::vec2(0.0, -30.0);
-                                
-                                egui::Area::new(egui::Id::new("done_tooltip_area").with(story.id.clone()))
-                                    .order(egui::Order::Tooltip)
-                                    .fixed_pos(tooltip_pos)
-                                    .show(ui.ctx(), |ui| {
-                                        egui::Frame::popup(ui.style())
-                                            .fill(self.theme.card_background)
-                                            .stroke(Stroke::new(1.0, self.theme.separator))
-                                            .corner_radius(CornerRadius::same(6))
-                                            .show(ui, |ui| {
-                                                ui.label(
-                                                    RichText::new(if is_done {
-                                                        "Mark as not done"
-                                                    } else {
-                                                        "Mark as done"
-                                                    })
-                                                    .color(self.theme.text)
-                                                    .size(14.0)
-                                                );
-                                            });
-                                    });
-                            }
-                            
-                            if done_btn.clicked() {
-                                self.pending_done_toggle = Some(story.id.clone());
-                            }
                             
                             // Link button if URL exists
                             if !story.url.is_empty() {
