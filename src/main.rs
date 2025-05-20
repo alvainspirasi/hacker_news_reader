@@ -2667,10 +2667,10 @@ impl HackerNewsReaderApp {
             }
         }
         
-        // Handle font size adjustment in comments view
-        if let Some(ref selected_story) = self.selected_story {
-            // Ctrl+O to open article in browser
-            if input.14 && input.28 { // Ctrl + O
+        // Ctrl+O to open article in browser - works in both story list and comments view
+        if input.14 && input.28 { // Ctrl + O
+            if let Some(ref selected_story) = self.selected_story {
+                // In comments view
                 if !selected_story.url.is_empty() {
                     self.open_link(&selected_story.url);
                     self.set_status_message(format!("Opening article in browser: {}", selected_story.title));
@@ -2680,7 +2680,30 @@ impl HackerNewsReaderApp {
                 }
                 self.needs_repaint = true;
                 return;
+            } else if let Some(idx) = self.selected_story_index {
+                // In story list view with story selected via keyboard
+                let stories_to_use = if (!self.search_query.is_empty() || self.show_todo_only || self.show_done_only) && !self.filtered_stories.is_empty() {
+                    &self.filtered_stories
+                } else {
+                    &self.stories
+                };
+                
+                if idx < stories_to_use.len() {
+                    let story = &stories_to_use[idx];
+                    if !story.url.is_empty() {
+                        self.open_link(&story.url);
+                        self.set_status_message(format!("Opening article in browser: {}", story.title));
+                    } else {
+                        self.set_status_message("No external URL available for this story".to_string());
+                    }
+                    self.needs_repaint = true;
+                    return;
+                }
             }
+        }
+        
+        // Handle font size adjustment in comments view
+        if let Some(ref selected_story) = self.selected_story {
             
             // Plus key to increase font size
             if input.21 {
@@ -2969,7 +2992,7 @@ impl HackerNewsReaderApp {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    RichText::new("Keyboard shortcuts: T to mark as Todo, D to mark as Done")
+                    RichText::new("Keyboard shortcuts: T for Todo, D for Done, Ctrl+O to open article")
                         .color(self.theme.secondary_text)
                         .size(13.0)
                         .italics()
