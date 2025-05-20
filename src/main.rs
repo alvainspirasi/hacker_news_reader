@@ -2436,13 +2436,13 @@ impl HackerNewsReaderApp {
         // Handle font size adjustment in comments view
         if let Some(_) = &self.selected_story {
             // Plus key to increase font size
-            if input.20 {
+            if input.21 {
                 self.increase_comment_font_size();
                 return;
             }
             
             // Minus key to decrease font size
-            if input.21 {
+            if input.22 {
                 self.decrease_comment_font_size();
                 return;
             }
