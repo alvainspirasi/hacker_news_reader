@@ -483,10 +483,15 @@ struct HackerNewsReaderApp {
     favorites_scroll_offset: f32,
     // Pending actions to avoid borrow checker issues
     pending_favorites_toggle: Option<String>,  // Story ID to toggle
+    pending_todo_toggle: Option<String>,      // Story ID to toggle todo
+    pending_done_toggle: Option<String>,      // Story ID to toggle done
     // Search functionality
     search_query: String,
     filtered_stories: Vec<HackerNewsItem>,
     show_search_ui: bool,
+    // Filter options
+    show_todo_only: bool,
+    show_done_only: bool,
     // Flag to auto-collapse comments when loading
     auto_collapse_on_load: bool,
     // Cache for cleaned HTML to improve performance with large comment threads
@@ -587,10 +592,14 @@ impl HackerNewsReaderApp {
             favorites_loading: false,
             favorites_scroll_offset: 0.0,
             pending_favorites_toggle: None,
+            pending_todo_toggle: None,
+            pending_done_toggle: None,
             // Initialize search functionality
             search_query: String::new(),
             filtered_stories: Vec::new(),
             show_search_ui: false,
+            show_todo_only: false,
+            show_done_only: false,
             // Initialize auto-collapse flag
             auto_collapse_on_load: true,
             // Initialize HTML cleaning cache
@@ -630,9 +639,9 @@ impl HackerNewsReaderApp {
         // Reset search state when loading fresh stories
         if self.show_search_ui {
             self.toggle_search_ui();
+        } else {
+            self.reset_all_filters();
         }
-        self.search_query.clear();
-        self.filtered_stories.clear();
         
         self.loading = true;
         self.current_page = 1; // Reset to page 1 when loading fresh stories
@@ -1105,8 +1114,7 @@ impl HackerNewsReaderApp {
             self.comments.clear();
             
             // Reset search state when switching tabs
-            self.search_query.clear();
-            self.filtered_stories.clear();
+            self.reset_all_filters();
             self.show_search_ui = false;
             
             // Reset pagination variables
@@ -1128,36 +1136,95 @@ impl HackerNewsReaderApp {
     fn toggle_search_ui(&mut self) {
         self.show_search_ui = !self.show_search_ui;
         if !self.show_search_ui {
-            // Clear search when hiding the search UI
-            self.search_query.clear();
-            self.filtered_stories.clear();
+            // Clear search and filters when hiding the search UI
+            self.reset_all_filters();
         } else {
             // Focus the search field when showing it
             self.needs_repaint = true;
         }
     }
     
+    // Reset all filters (search, todo, done)
+    fn reset_all_filters(&mut self) {
+        self.search_query.clear();
+        self.show_todo_only = false;
+        self.show_done_only = false;
+        self.filtered_stories.clear();
+    }
+    
+    fn toggle_todo_filter(&mut self) {
+        self.show_todo_only = !self.show_todo_only;
+        
+        // Ensure we don't have both filters active at the same time
+        if self.show_todo_only && self.show_done_only {
+            self.show_done_only = false;
+        }
+        
+        // Reapply filters
+        self.apply_filters();
+        self.needs_repaint = true;
+    }
+    
+    fn toggle_done_filter(&mut self) {
+        self.show_done_only = !self.show_done_only;
+        
+        // Ensure we don't have both filters active at the same time
+        if self.show_done_only && self.show_todo_only {
+            self.show_todo_only = false;
+        }
+        
+        // Reapply filters
+        self.apply_filters();
+        self.needs_repaint = true;
+    }
+    
     // Apply the search filter to stories
     fn apply_search_filter(&mut self) {
-        if self.search_query.is_empty() {
-            // If search query is empty, clear filtered results
+        if self.search_query.is_empty() && !self.show_todo_only && !self.show_done_only {
+            // If no filters are active, clear filtered results
             self.filtered_stories.clear();
             return;
         }
         
-        // Convert search query to lowercase for case-insensitive search
-        let query = self.search_query.to_lowercase();
+        // Apply all filters (search + todo/done)
+        self.apply_filters();
+    }
+    
+    // Apply all filters (search, todo, done)
+    fn apply_filters(&mut self) {
+        // Start with all stories
+        let mut filtered = self.stories.clone();
         
-        // Filter stories based on search query
-        self.filtered_stories = self.stories.iter()
-            .filter(|story| {
-                // Search in title, domain, and author
-                story.title.to_lowercase().contains(&query) || 
-                story.domain.to_lowercase().contains(&query) || 
-                story.by.to_lowercase().contains(&query)
-            })
-            .cloned()
-            .collect();
+        // Apply search filter if there's a query
+        if !self.search_query.is_empty() {
+            // Convert search query to lowercase for case-insensitive search
+            let query = self.search_query.to_lowercase();
+            
+            filtered = filtered.into_iter()
+                .filter(|story| {
+                    // Search in title, domain, and author
+                    story.title.to_lowercase().contains(&query) || 
+                    story.domain.to_lowercase().contains(&query) || 
+                    story.by.to_lowercase().contains(&query)
+                })
+                .collect();
+        }
+        
+        // Apply todo filter if active
+        if self.show_todo_only {
+            filtered = filtered.into_iter()
+                .filter(|story| self.is_todo(&story.id))
+                .collect();
+        }
+        
+        // Apply done filter if active
+        if self.show_done_only {
+            filtered = filtered.into_iter()
+                .filter(|story| self.is_done(&story.id))
+                .collect();
+        }
+        
+        self.filtered_stories = filtered;
     }
 }
 
@@ -1247,6 +1314,61 @@ impl eframe::App for HackerNewsReaderApp {
             }
             
             self.needs_repaint = true;
+        }
+        
+        // Process pending todo toggle
+        if let Some(story_id) = self.pending_todo_toggle.take() {
+            let story_opt = 
+                if let Some(ref selected) = self.selected_story {
+                    if selected.id == story_id {
+                        Some(selected.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    self.stories.iter().find(|s| s.id == story_id).cloned()
+                };
+                
+            if let Some(story) = story_opt {
+                // Add to todo list (add to favorites and ensure not marked as done)
+                self.add_to_todo(&story);
+                
+                // Show status message
+                self.status_message = format!("Added '{}' to your todo list", story.title);
+                
+                self.needs_repaint = true;
+            }
+        }
+        
+        // Process pending done toggle
+        if let Some(story_id) = self.pending_done_toggle.take() {
+            let story_opt = 
+                if let Some(ref selected) = self.selected_story {
+                    if selected.id == story_id {
+                        Some(selected.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    self.stories.iter().find(|s| s.id == story_id).cloned()
+                };
+                
+            if let Some(story) = story_opt {
+                // Check current done status for the message
+                let is_done = self.is_done(&story_id);
+                
+                // Toggle done status
+                self.toggle_done(&story);
+                
+                // Show status message
+                if is_done {
+                    self.status_message = format!("Marked '{}' as not done", story.title);
+                } else {
+                    self.status_message = format!("Marked '{}' as done", story.title);
+                }
+                
+                self.needs_repaint = true;
+            }
         }
         
         // Removed debug code and runtime storage saving
@@ -1503,7 +1625,7 @@ impl eframe::App for HackerNewsReaderApp {
                     
                     // Text field for search query
                     let text_edit = ui.add_sized(
-                        [ui.available_width() - 80.0, 32.0],
+                        [ui.available_width() - 260.0, 32.0], // Make room for filter buttons
                         egui::TextEdit::singleline(&mut self.search_query)
                             .hint_text("Enter keywords to filter stories...")
                             .text_color(self.theme.text)
@@ -1522,6 +1644,56 @@ impl eframe::App for HackerNewsReaderApp {
                         self.apply_search_filter();
                     }
                     
+                    // Todo filter button
+                    ui.add_space(8.0);
+                    
+                    // Todo button color based on active state
+                    let todo_btn_color = if self.show_todo_only {
+                        Color32::from_rgb(46, 204, 113) // Green for active
+                    } else {
+                        self.theme.button_foreground
+                    };
+                    
+                    let todo_btn = ui.add_sized(
+                        [80.0, 32.0],
+                        egui::Button::new(
+                            RichText::new("TODO")
+                                .color(todo_btn_color)
+                                .size(14.0)
+                        )
+                        .corner_radius(CornerRadius::same(6))
+                        .fill(self.theme.button_background)
+                    );
+                    
+                    if todo_btn.clicked() {
+                        self.toggle_todo_filter();
+                    }
+                    
+                    // Done filter button
+                    ui.add_space(8.0);
+                    
+                    // Done button color based on active state
+                    let done_btn_color = if self.show_done_only {
+                        Color32::from_rgb(52, 152, 219) // Blue for active
+                    } else {
+                        self.theme.button_foreground
+                    };
+                    
+                    let done_btn = ui.add_sized(
+                        [80.0, 32.0],
+                        egui::Button::new(
+                            RichText::new("DONE")
+                                .color(done_btn_color)
+                                .size(14.0)
+                        )
+                        .corner_radius(CornerRadius::same(6))
+                        .fill(self.theme.button_background)
+                    );
+                    
+                    if done_btn.clicked() {
+                        self.toggle_done_filter();
+                    }
+                    
                     // Clear button
                     if !self.search_query.is_empty() {
                         ui.add_space(8.0);
@@ -1536,21 +1708,42 @@ impl eframe::App for HackerNewsReaderApp {
                         );
                         
                         if clear_btn.clicked() {
-                            self.search_query.clear();
-                            self.filtered_stories.clear();
+                            self.reset_all_filters();
                         }
                     }
                 });
                 
-                // Display search results summary if there's a search query
-                if !self.search_query.is_empty() {
+                // Display results summary if there's a search query or active filters
+                if !self.search_query.is_empty() || self.show_todo_only || self.show_done_only {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         let results_count = self.filtered_stories.len();
                         let total_count = self.stories.len();
                         
+                        // Build filter info text
+                        let mut filter_text = String::new();
+                        
+                        if !self.search_query.is_empty() {
+                            filter_text.push_str(&format!("search query \"{}\"", self.search_query));
+                        }
+                        
+                        if self.show_todo_only {
+                            if !filter_text.is_empty() {
+                                filter_text.push_str(" and ");
+                            }
+                            filter_text.push_str("TODO filter");
+                        }
+                        
+                        if self.show_done_only {
+                            if !filter_text.is_empty() {
+                                filter_text.push_str(" and ");
+                            }
+                            filter_text.push_str("DONE filter");
+                        }
+                        
                         ui.label(
-                            RichText::new(format!("Found {} results from {} stories", results_count, total_count))
+                            RichText::new(format!("Found {} results from {} stories using {}", 
+                                results_count, total_count, filter_text))
                                 .color(self.theme.secondary_text)
                                 .size(14.0)
                                 .italics()
@@ -1805,6 +1998,110 @@ impl eframe::App for HackerNewsReaderApp {
                                     // Set pending toggle
                                     self.pending_favorites_toggle = Some(story.id.clone());
                                 }
+                                
+                                // Add todo button
+                                ui.add_space(8.0);
+                                
+                                // Is this story already in the todo list?
+                                let is_todo = self.is_todo(story_id);
+                                let todo_color = if is_todo {
+                                    Color32::from_rgb(46, 204, 113) // Green for todo
+                                } else {
+                                    self.theme.secondary_text
+                                };
+                                
+                                let todo_btn = ui.add_sized(
+                                    [55.0, 30.0],
+                                    egui::Button::new(
+                                        RichText::new("TODO")
+                                            .size(14.0)
+                                            .color(todo_color)
+                                    )
+                                    .corner_radius(CornerRadius::same(6))
+                                    .fill(self.theme.button_background)
+                                );
+                                
+                                // Add tooltip for the todo button
+                                if todo_btn.hovered() {
+                                    let tooltip_pos = todo_btn.rect.left_top() + egui::vec2(0.0, -30.0);
+                                    
+                                    egui::Area::new(egui::Id::new("todo_tooltip_area").with(story.id.clone()))
+                                        .order(egui::Order::Tooltip)
+                                        .fixed_pos(tooltip_pos)
+                                        .show(ui.ctx(), |ui| {
+                                            egui::Frame::popup(ui.style())
+                                                .fill(self.theme.card_background)
+                                                .stroke(Stroke::new(1.0, self.theme.separator))
+                                                .corner_radius(CornerRadius::same(6))
+                                                .show(ui, |ui| {
+                                                    ui.label(
+                                                        RichText::new(if is_todo {
+                                                            "Already in your todo list"
+                                                        } else {
+                                                            "Add to your todo list"
+                                                        })
+                                                        .color(self.theme.text)
+                                                        .size(14.0)
+                                                    );
+                                                });
+                                        });
+                                }
+                                
+                                if todo_btn.clicked() {
+                                    self.pending_todo_toggle = Some(story.id.clone());
+                                }
+                                
+                                // Add done button
+                                ui.add_space(8.0);
+                                
+                                // Is this story marked as done?
+                                let is_done = self.is_done(story_id);
+                                let done_color = if is_done {
+                                    Color32::from_rgb(52, 152, 219) // Blue for done
+                                } else {
+                                    self.theme.secondary_text
+                                };
+                                
+                                let done_btn = ui.add_sized(
+                                    [55.0, 30.0],
+                                    egui::Button::new(
+                                        RichText::new("DONE")
+                                            .size(14.0)
+                                            .color(done_color)
+                                    )
+                                    .corner_radius(CornerRadius::same(6))
+                                    .fill(self.theme.button_background)
+                                );
+                                
+                                // Add tooltip for the done button
+                                if done_btn.hovered() {
+                                    let tooltip_pos = done_btn.rect.left_top() + egui::vec2(0.0, -30.0);
+                                    
+                                    egui::Area::new(egui::Id::new("done_tooltip_area").with(story.id.clone()))
+                                        .order(egui::Order::Tooltip)
+                                        .fixed_pos(tooltip_pos)
+                                        .show(ui.ctx(), |ui| {
+                                            egui::Frame::popup(ui.style())
+                                                .fill(self.theme.card_background)
+                                                .stroke(Stroke::new(1.0, self.theme.separator))
+                                                .corner_radius(CornerRadius::same(6))
+                                                .show(ui, |ui| {
+                                                    ui.label(
+                                                        RichText::new(if is_done {
+                                                            "Mark as not done"
+                                                        } else {
+                                                            "Mark as done"
+                                                        })
+                                                        .color(self.theme.text)
+                                                        .size(14.0)
+                                                    );
+                                                });
+                                        });
+                                }
+                                
+                                if done_btn.clicked() {
+                                    self.pending_done_toggle = Some(story.id.clone());
+                                }
                             });
                         });
                     });
@@ -1905,58 +2202,25 @@ impl eframe::App for HackerNewsReaderApp {
                 self.render_pagination_controls(ui);
                 
                 // Comments section with scrolling - use ID for persistent state
-                // Set up a virtual list to only render visible comments for improved performance
-                let available_height = ui.available_height();
-                
-                // Calculate estimated heights
-                // Note: These constants are used in height calculation logic, 
-                // now handled directly in estimate_comment_height()
-                
+                // Set up a regular scroll area without virtual scrolling
                 // Get comments for the current page only
                 let page_comments = self.get_current_page_comments();
                 
-                // Create height estimates for each comment (including children if expanded)
-                let mut comment_heights: Vec<f32> = Vec::new();
-                let mut _total_height: f32 = 0.0; // Prefixed with _ to indicate intentionally unused
-                
-                for comment in &page_comments {
-                    let height = self.estimate_comment_height(comment, 0);
-                    comment_heights.push(height);
-                    _total_height += height; // Track total height for future scroll area sizing
-                }
-                
+                // Create a simple ScrollArea without the virtual list logic
+                // This provides more stable scrolling behavior
                 let scroll_response = ScrollArea::vertical()
                     .id_salt("comments_scroll_area")
                     .auto_shrink([false, false])
                     .vertical_scroll_offset(self.comments_scroll_offset)
                     .show(ui, |ui| {
-                        // Add empty space at the top to position the viewport correctly
-                        let viewport_min_y = self.comments_scroll_offset;
-                        let viewport_max_y = viewport_min_y + available_height;
-                        
-                        let mut current_y = 0.0;
-                        
-                        // Only render comments that are visible in the viewport
-                        for (i, comment) in page_comments.iter().enumerate() {
-                            let comment_height = comment_heights[i];
-                            
-                            // Check if comment is visible in viewport
-                            let comment_top = current_y;
-                            let comment_bottom = comment_top + comment_height;
-                            
-                            if comment_bottom >= viewport_min_y && comment_top <= viewport_max_y {
-                                // Comment is visible, render it
-                                self.render_comment(ui, comment, 0);
-                            } else {
-                                // Comment is not visible, just add space
-                                ui.add_space(comment_height);
-                            }
-                            
-                            current_y += comment_height;
+                        // Just render all comments directly without height estimates or viewport checks
+                        // This eliminates scroll position jumps when nearing the bottom
+                        for comment in &page_comments {
+                            self.render_comment(ui, comment, 0);
                         }
                         
-                        // Allow extra space for scrolling at the bottom
-                        ui.add_space(20.0);
+                        // Add some padding at the bottom for better UI
+                        ui.add_space(40.0);
                     });
                     
                 // Store the actual scroll position after the user might have scrolled manually
@@ -2194,9 +2458,9 @@ impl HackerNewsReaderApp {
         // Reset search state when loading fresh stories
         if self.show_search_ui {
             self.toggle_search_ui();
+        } else {
+            self.reset_all_filters();
         }
-        self.search_query.clear();
-        self.filtered_stories.clear();
         
         self.loading = true;
         self.current_page = 1; // Reset to page 1 when loading fresh stories
@@ -2296,6 +2560,8 @@ impl HackerNewsReaderApp {
                 i.key_pressed(egui::Key::R),            // R key - For Ctrl+R refresh shortcut
                 i.key_pressed(egui::Key::Enter),        // Enter key - Open selected story
                 i.key_pressed(egui::Key::S),            // S key - For Ctrl+S side panel toggle
+                i.key_pressed(egui::Key::T),            // T key - Mark selected story as Todo
+                i.key_pressed(egui::Key::D),            // D key - Mark selected story as Done
             )
         });
         
@@ -2333,7 +2599,7 @@ impl HackerNewsReaderApp {
         // Handle story navigation with arrow keys in the stories view
         if !has_text_focus && self.selected_story.is_none() {
             // Get the list of stories to navigate
-            let stories_to_display = if !self.search_query.is_empty() && !self.filtered_stories.is_empty() {
+            let stories_to_display = if (!self.search_query.is_empty() || self.show_todo_only || self.show_done_only) && !self.filtered_stories.is_empty() {
                 &self.filtered_stories
             } else {
                 &self.stories
@@ -2405,6 +2671,39 @@ impl HackerNewsReaderApp {
                             // Open the comments for the selected story
                             let story = stories_to_display[idx].clone();
                             self.view_comments(story, false);
+                            return;
+                        }
+                    }
+                }
+                
+                // T key to mark selected story as Todo
+                else if input.26 { // T key - now at index 26
+                    if let Some(idx) = self.selected_story_index {
+                        if idx < stories_to_display.len() {
+                            let story = stories_to_display[idx].clone();
+                            self.add_to_todo(&story);
+                            self.status_message = format!("Added '{}' to your todo list", story.title);
+                            self.needs_repaint = true;
+                            return;
+                        }
+                    }
+                }
+                
+                // D key to mark selected story as Done
+                else if input.27 { // D key - now at index 27
+                    if let Some(idx) = self.selected_story_index {
+                        if idx < stories_to_display.len() {
+                            let story = stories_to_display[idx].clone();
+                            let was_done = self.is_done(&story.id);
+                            self.toggle_done(&story);
+                            
+                            if was_done {
+                                self.status_message = format!("Marked '{}' as not done", story.title);
+                            } else {
+                                self.status_message = format!("Marked '{}' as done", story.title);
+                            }
+                            
+                            self.needs_repaint = true;
                             return;
                         }
                     }
@@ -2655,28 +2954,64 @@ impl HackerNewsReaderApp {
         let ctx = ui.ctx().clone(); // Get context from UI
         let mut story_to_view = None;
         
-        // Use filtered stories if there's a search query, otherwise use all stories
-        let stories_to_display = if !self.search_query.is_empty() && !self.filtered_stories.is_empty() {
+        // Use filtered stories if there's a search query or active filters, otherwise use all stories
+        let stories_to_display = if (!self.search_query.is_empty() || self.show_todo_only || self.show_done_only) && !self.filtered_stories.is_empty() {
             self.filtered_stories.clone()
         } else {
             self.stories.clone()
         };
         
-        // If search is active but no results found, show a message
-        if !self.search_query.is_empty() && self.filtered_stories.is_empty() {
+        // If filters are active but no results found, show a message
+        if ((!self.search_query.is_empty() || self.show_todo_only || self.show_done_only) && self.filtered_stories.is_empty()) {
             ui.vertical_centered(|ui| {
                 ui.add_space(20.0);
+                
+                // Build appropriate message based on active filters
+                let mut message = String::new();
+                
+                if !self.search_query.is_empty() {
+                    message.push_str(&format!("No results found for search '{}' ", self.search_query));
+                }
+                
+                if self.show_todo_only {
+                    if !message.is_empty() {
+                        message.push_str("with ");
+                    } else {
+                        message.push_str("No results found with ");
+                    }
+                    message.push_str("TODO filter ");
+                }
+                
+                if self.show_done_only {
+                    if !message.is_empty() {
+                        message.push_str("with ");
+                    } else {
+                        message.push_str("No results found with ");
+                    }
+                    message.push_str("DONE filter ");
+                }
+                
                 ui.label(
-                    RichText::new(format!("No results found for '{}'", self.search_query))
+                    RichText::new(message)
                         .color(self.theme.secondary_text)
                         .size(18.0)
                         .italics()
                 );
+                
                 ui.add_space(8.0);
-                let try_again_text = RichText::new("Try different keywords or clear search.")
-                    .color(self.theme.secondary_text)
-                    .size(16.0);
-                ui.label(try_again_text);
+                
+                // Build appropriate suggestion
+                let try_again_text = if !self.search_query.is_empty() {
+                    "Try different keywords or disable filters."
+                } else {
+                    "Try disabling filters or add some favorites first."
+                };
+                
+                ui.label(
+                    RichText::new(try_again_text)
+                        .color(self.theme.secondary_text)
+                        .size(16.0)
+                );
                 ui.add_space(20.0);
             });
             return;
@@ -2912,6 +3247,110 @@ impl HackerNewsReaderApp {
                             
                             if favorite_btn.clicked() {
                                 self.pending_favorites_toggle = Some(story.id.clone());
+                            }
+                            
+                            // Todo button
+                            ui.add_space(8.0);
+                            
+                            // Is this story already in the todo list?
+                            let is_todo = self.is_todo(&story.id);
+                            let todo_color = if is_todo {
+                                Color32::from_rgb(46, 204, 113) // Green for todo
+                            } else {
+                                self.theme.secondary_text
+                            };
+                            
+                            let todo_btn = ui.add_sized(
+                                [55.0, 28.0],
+                                egui::Button::new(
+                                    RichText::new("TODO")
+                                        .size(14.0)
+                                        .color(todo_color)
+                                )
+                                .corner_radius(CornerRadius::same(6))
+                                .fill(self.theme.button_background)
+                            );
+                            
+                            // Add tooltip for the todo button
+                            if todo_btn.hovered() {
+                                let tooltip_pos = todo_btn.rect.left_top() + egui::vec2(0.0, -30.0);
+                                
+                                egui::Area::new(egui::Id::new("todo_tooltip_area").with(story.id.clone()))
+                                    .order(egui::Order::Tooltip)
+                                    .fixed_pos(tooltip_pos)
+                                    .show(ui.ctx(), |ui| {
+                                        egui::Frame::popup(ui.style())
+                                            .fill(self.theme.card_background)
+                                            .stroke(Stroke::new(1.0, self.theme.separator))
+                                            .corner_radius(CornerRadius::same(6))
+                                            .show(ui, |ui| {
+                                                ui.label(
+                                                    RichText::new(if is_todo {
+                                                        "Already in your todo list"
+                                                    } else {
+                                                        "Add to your todo list"
+                                                    })
+                                                    .color(self.theme.text)
+                                                    .size(14.0)
+                                                );
+                                            });
+                                    });
+                            }
+                            
+                            if todo_btn.clicked() {
+                                self.pending_todo_toggle = Some(story.id.clone());
+                            }
+                            
+                            // Done button
+                            ui.add_space(8.0);
+                            
+                            // Is this story marked as done?
+                            let is_done = self.is_done(&story.id);
+                            let done_color = if is_done {
+                                Color32::from_rgb(52, 152, 219) // Blue for done
+                            } else {
+                                self.theme.secondary_text
+                            };
+                            
+                            let done_btn = ui.add_sized(
+                                [55.0, 28.0],
+                                egui::Button::new(
+                                    RichText::new("DONE")
+                                        .size(14.0)
+                                        .color(done_color)
+                                )
+                                .corner_radius(CornerRadius::same(6))
+                                .fill(self.theme.button_background)
+                            );
+                            
+                            // Add tooltip for the done button
+                            if done_btn.hovered() {
+                                let tooltip_pos = done_btn.rect.left_top() + egui::vec2(0.0, -30.0);
+                                
+                                egui::Area::new(egui::Id::new("done_tooltip_area").with(story.id.clone()))
+                                    .order(egui::Order::Tooltip)
+                                    .fixed_pos(tooltip_pos)
+                                    .show(ui.ctx(), |ui| {
+                                        egui::Frame::popup(ui.style())
+                                            .fill(self.theme.card_background)
+                                            .stroke(Stroke::new(1.0, self.theme.separator))
+                                            .corner_radius(CornerRadius::same(6))
+                                            .show(ui, |ui| {
+                                                ui.label(
+                                                    RichText::new(if is_done {
+                                                        "Mark as not done"
+                                                    } else {
+                                                        "Mark as done"
+                                                    })
+                                                    .color(self.theme.text)
+                                                    .size(14.0)
+                                                );
+                                            });
+                                    });
+                            }
+                            
+                            if done_btn.clicked() {
+                                self.pending_done_toggle = Some(story.id.clone());
                             }
                             
                             // Link button if URL exists
@@ -3759,7 +4198,46 @@ impl HackerNewsReaderApp {
             // Add to favorites
             self.database.add_favorite(story)
         };
-
+        
+    }
+    
+    fn add_to_todo(&mut self, story: &HackerNewsItem) {
+        // Add to favorites if not already a favorite
+        if !self.is_favorite(&story.id) {
+            if let Err(e) = self.database.add_favorite(story) {
+                eprintln!("Error adding story to favorites: {}", e);
+                return;
+            }
+        }
+        
+        // Ensure it's marked as not done
+        if self.is_done(&story.id) {
+            if let Err(e) = self.database.toggle_favorite_done(&story.id) {
+                eprintln!("Error marking story as todo: {}", e);
+            }
+        }
+        
+        // Reload favorites to reflect changes
+        self.reload_favorites();
+    }
+    
+    fn toggle_done(&mut self, story: &HackerNewsItem) {
+        // If not a favorite yet, add it first
+        if !self.is_favorite(&story.id) {
+            if let Err(e) = self.database.add_favorite(story) {
+                eprintln!("Error adding story to favorites: {}", e);
+                return;
+            }
+        }
+        
+        // Toggle the done status
+        if let Err(e) = self.database.toggle_favorite_done(&story.id) {
+            eprintln!("Error toggling done status: {}", e);
+            return;
+        }
+        
+        // Reload favorites to reflect changes
+        self.reload_favorites();
         if let Err(e) = result {
             eprintln!("Error toggling favorite status: {}", e);
             return;
@@ -3808,6 +4286,41 @@ impl HackerNewsReaderApp {
             Ok(is_fav) => is_fav,
             Err(_) => false,
         }
+    }
+    
+    fn is_todo(&self, id: &str) -> bool {
+        // A story is a "todo" if it's a favorite but not marked as done
+        match self.database.is_favorite(id) {
+            Ok(is_fav) => {
+                if !is_fav {
+                    return false;
+                }
+                
+                // Check if it's not marked as done
+                match self.get_favorite_done_status(id) {
+                    Ok(is_done) => !is_done,
+                    Err(_) => false,
+                }
+            },
+            Err(_) => false,
+        }
+    }
+    
+    fn is_done(&self, id: &str) -> bool {
+        self.get_favorite_done_status(id).unwrap_or(false)
+    }
+    
+    fn get_favorite_done_status(&self, id: &str) -> Result<bool, anyhow::Error> {
+        // Find the favorite in our cached list first for better performance
+        for fav in &self.favorites {
+            if fav.id == id {
+                return Ok(fav.done);
+            }
+        }
+        
+        // If not found in cache, we don't know the done status
+        // (we only know done status for favorites)
+        Ok(false)
     }
     
     // Check if a story has been viewed by the user
