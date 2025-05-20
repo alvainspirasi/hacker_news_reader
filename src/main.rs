@@ -3025,7 +3025,10 @@ impl HackerNewsReaderApp {
             
             // Normalize whitespace: replace multiple consecutive newlines with just two
             let whitespace_regex = regex::Regex::new(r"\n{3,}").unwrap();
-            whitespace_regex.replace_all(&text, "\n\n").to_string()
+            let text = whitespace_regex.replace_all(&text, "\n\n").to_string();
+            
+            // Decode HTML entities like &gt; to >
+            html_escape::decode_html_entities(&text).to_string()
         };
         
         // Cache the result for future use
