@@ -448,6 +448,8 @@ struct HackerNewsReaderApp {
     hn_client: HackerNewsClient,
     stories: Vec<HackerNewsItem>,
     selected_story: Option<HackerNewsItem>,
+    // Index of the currently selected story for keyboard navigation
+    selected_story_index: Option<usize>,
     comments: Vec<HackerNewsComment>,
     loading: bool,
     theme: AppTheme,
@@ -556,6 +558,7 @@ impl HackerNewsReaderApp {
             hn_client: HackerNewsClient::new(),
             // Uncomment to use test_stories for debugging
             stories: test_stories, // Use empty Vec::new() for network loading
+            selected_story_index: None, // No story selected initially
             selected_story: None,
             comments: Vec::new(),
             loading: false,
@@ -1086,6 +1089,7 @@ impl HackerNewsReaderApp {
             
             // Clear any selected story when switching tabs
             self.selected_story = None;
+            self.selected_story_index = None; // Reset the selected story index
             self.comments.clear();
             
             // Reset search state when switching tabs
@@ -2185,6 +2189,7 @@ impl HackerNewsReaderApp {
         self.loading = true;
         self.current_page = 1; // Reset to page 1 when loading fresh stories
         self.end_of_stories = false; // Reset end of stories flag
+        self.selected_story_index = None; // Reset the selected story index
         
         // Create a new thread for loading
         let client = self.hn_client.clone();
@@ -2277,6 +2282,7 @@ impl HackerNewsReaderApp {
                 i.key_pressed(egui::Key::Plus),         // Plus key - Increase font size
                 i.key_pressed(egui::Key::Minus),        // Minus key - Decrease font size
                 i.key_pressed(egui::Key::R),            // R key - For Ctrl+R refresh shortcut
+                i.key_pressed(egui::Key::Enter),        // Enter key - Open selected story
             )
         });
         
@@ -2304,9 +2310,88 @@ impl HackerNewsReaderApp {
         // Don't process number key shortcuts if we have input focus in search
         let has_text_focus = ctx.memory(|m| m.has_focus(egui::Id::new("search_input")));
         
-        // Handle tab switching with number keys (1-6) if not in a story view and not in search
+        // Handle story navigation with arrow keys in the stories view
         if !has_text_focus && self.selected_story.is_none() {
-            // Tab switching
+            // Get the list of stories to navigate
+            let stories_to_display = if !self.search_query.is_empty() && !self.filtered_stories.is_empty() {
+                &self.filtered_stories
+            } else {
+                &self.stories
+            };
+            
+            // Only process if we have stories
+            if !stories_to_display.is_empty() {
+                // Constants for story card height approximation
+                const APPROX_STORY_HEIGHT: f32 = 150.0; // Approximate height of a story card in pixels
+                const APPROX_STORY_MARGIN: f32 = 20.0;  // Approximate margin between stories
+                const VERTICAL_OFFSET_BUFFER: f32 = 100.0; // Additional buffer to ensure visibility
+                
+                // Helper function to calculate the scroll position to center the story in the viewport
+                let center_story_in_viewport = |idx: usize| {
+                    let story_position = (idx as f32) * (APPROX_STORY_HEIGHT + APPROX_STORY_MARGIN);
+                    let viewport_height = ctx.available_rect().height();
+                    let center_position = story_position - (viewport_height / 2.0) + (APPROX_STORY_HEIGHT / 2.0);
+                    center_position.max(0.0)
+                };
+                
+                // Down arrow to select the next story
+                if input.6 {  // ArrowDown
+                    match self.selected_story_index {
+                        Some(idx) if idx + 1 < stories_to_display.len() => {
+                            // Move to next story
+                            self.selected_story_index = Some(idx + 1);
+                            
+                            // Center the next story in the viewport
+                            self.stories_scroll_offset = center_story_in_viewport(idx + 1);
+                        }
+                        None => {
+                            // Select the first story if none is selected
+                            self.selected_story_index = Some(0);
+                            // Center the first story in the viewport
+                            self.stories_scroll_offset = center_story_in_viewport(0);
+                        }
+                        _ => {}  // At the last story, do nothing
+                    }
+                    self.needs_repaint = true;
+                    return;
+                }
+                
+                // Up arrow to select the previous story
+                else if input.5 {  // ArrowUp
+                    if let Some(idx) = self.selected_story_index {
+                        if idx > 0 {
+                            // Move to previous story
+                            self.selected_story_index = Some(idx - 1);
+                            
+                            // Center the previous story in the viewport
+                            self.stories_scroll_offset = center_story_in_viewport(idx - 1);
+                        }
+                    } else if !stories_to_display.is_empty() {
+                        // Select the last story if none is selected
+                        let last_idx = stories_to_display.len() - 1;
+                        self.selected_story_index = Some(last_idx);
+                        
+                        // Center the last story in the viewport
+                        self.stories_scroll_offset = center_story_in_viewport(last_idx);
+                    }
+                    self.needs_repaint = true;
+                    return;
+                }
+                
+                // Enter to view the selected story
+                else if input.24 {  // Enter key - now at index 24
+                    if let Some(idx) = self.selected_story_index {
+                        if idx < stories_to_display.len() {
+                            // Open the comments for the selected story
+                            let story = stories_to_display[idx].clone();
+                            self.view_comments(story, false);
+                            return;
+                        }
+                    }
+                }
+            }
+            
+            // Handle tab switching with number keys (1-6)
             if input.15 {
                 self.switch_tab(Tab::Hot);
                 return;
@@ -2468,20 +2553,9 @@ impl HackerNewsReaderApp {
                 self.needs_repaint = true;
             }
             
-            // Arrow Up - Scroll up
-            if input.5 {
-                self.stories_scroll_offset -= SCROLL_AMOUNT;
-                if self.stories_scroll_offset < 0.0 {
-                    self.stories_scroll_offset = 0.0;
-                }
-                self.needs_repaint = true;
-            }
-            
-            // Arrow Down - Scroll down
-            if input.6 {
-                self.stories_scroll_offset += SCROLL_AMOUNT;
-                self.needs_repaint = true;
-            }
+            // We're not using arrow keys for scrolling in the stories view anymore.
+            // Arrow key navigation is implemented in the story selection code above.
+            // This prevents arrow keys from causing both selection and scrolling.
             
             // Home - Scroll to top
             if input.7 {
@@ -2591,15 +2665,43 @@ impl HackerNewsReaderApp {
         // Calculate proper starting rank for display (always start from 1)
         let mut current_rank = 1;
         
-        for (_i, story) in stories_to_display.iter().enumerate() {
+        for (i, story) in stories_to_display.iter().enumerate() {
+            // Check if this story is the selected one for keyboard navigation
+            let is_selected = self.selected_story_index == Some(i);
+            
             // Get card background based on score using our helper method
-            let card_background = self.theme.get_card_background(story.score);
+            let mut card_background = self.theme.get_card_background(story.score);
             
             // Get the appropriate border stroke based on score
-            let card_stroke = self.theme.get_card_stroke(story.score);
+            let mut card_stroke = self.theme.get_card_stroke(story.score);
+            
+            // Override with selection highlighting if this is the selected story
+            if is_selected {
+                // Use a more prominent background and border for the selected story
+                if self.is_dark_mode {
+                    // In dark mode, use a slightly brighter background
+                    card_background = Color32::from_rgba_premultiplied(
+                        card_background.r().saturating_add(15),
+                        card_background.g().saturating_add(15),
+                        card_background.b().saturating_add(15),
+                        255
+                    );
+                } else {
+                    // In light mode, use a slightly darker background
+                    card_background = Color32::from_rgba_premultiplied(
+                        card_background.r().saturating_sub(10),
+                        card_background.g().saturating_sub(10),
+                        card_background.b().saturating_sub(10),
+                        255
+                    );
+                }
+                
+                // Use a thicker, more visible border for the selected item
+                card_stroke = Stroke::new(2.0, self.theme.accent);
+            }
             
             // Create a card for each story with background and border based on score
-            egui::Frame::new()
+            let card_response = egui::Frame::new()
                 .fill(card_background)
                 .corner_radius(CornerRadius::same(8))
                 .stroke(card_stroke)
@@ -2832,6 +2934,23 @@ impl HackerNewsReaderApp {
                         });
                     });
                 });
+                
+                // Check if the card was clicked to select this story
+                if card_response.response.clicked() {
+                    // Set this story as the selected one
+                    self.selected_story_index = Some(i);
+                    
+                    // Calculate the scroll position to center this story
+                    const APPROX_STORY_HEIGHT: f32 = 150.0;
+                    const APPROX_STORY_MARGIN: f32 = 20.0;
+                    let viewport_height = ui.available_height();
+                    let story_position = (i as f32) * (APPROX_STORY_HEIGHT + APPROX_STORY_MARGIN);
+                    let center_position = story_position - (viewport_height / 2.0) + (APPROX_STORY_HEIGHT / 2.0);
+                    self.stories_scroll_offset = center_position.max(0.0);
+                    
+                    // Mark that we need to repaint
+                    self.needs_repaint = true;
+                }
         }
         
         if let Some(story) = story_to_view {
