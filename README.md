@@ -69,7 +69,7 @@ The compiled binary will be available at `target/release/hacker_news_reader`.
 
 ### Keyboard Shortcuts
 
-- **Arrow Keys**: Use arrow keys to scroll.
+- **Arrow Keys**: Use arrow keys to navigate through stories.
 - **Space / Page Down**: Scroll down a page.
 - **Page Up**: Scroll up a page.
 - **Home**: Scroll to the top.
@@ -79,7 +79,9 @@ The compiled binary will be available at `target/release/hacker_news_reader`.
 - **Shift+C**: When viewing comments, expand all comments.
 - **+ (Plus)**: Increase comment font size when in comments view.
 - **- (Minus)**: Decrease comment font size when in comments view.
+- **Ctrl+S**: Toggle the side panel (favorites).
 - **Ctrl+F**: Show search interface to filter stories.
+- **Ctrl+R**: Refresh current view and bypass cache.
 - **Escape**: Close search interface.
 - **1-6 Number Keys**: Switch between tabs (1=Hot, 2=New, 3=Show, 4=Ask, 5=Jobs, 6=Best).
 

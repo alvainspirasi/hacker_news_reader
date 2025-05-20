@@ -2295,12 +2295,20 @@ impl HackerNewsReaderApp {
                 i.key_pressed(egui::Key::Minus),        // Minus key - Decrease font size
                 i.key_pressed(egui::Key::R),            // R key - For Ctrl+R refresh shortcut
                 i.key_pressed(egui::Key::Enter),        // Enter key - Open selected story
+                i.key_pressed(egui::Key::S),            // S key - For Ctrl+S side panel toggle
             )
         });
         
         // Handle Ctrl+R for refresh (highest priority) - this should work in any view
         if input.14 && input.23 && !self.loading {  // Ctrl + R and not already loading
             self.refresh_current_view(true);  // Force refresh (bypass cache)
+            return;
+        }
+        
+        // Handle Ctrl+S to toggle side panel (high priority) - this should work in any view
+        if input.14 && input.25 {  // Ctrl + S
+            self.toggle_favorites_panel();
+            self.needs_repaint = true;
             return;
         }
         
