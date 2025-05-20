@@ -492,6 +492,9 @@ struct HackerNewsReaderApp {
     // Filter options
     show_todo_only: bool,
     show_done_only: bool,
+    // Status message for user feedback
+    status_message: String,
+    last_status_update_time: f64,
     // Flag to auto-collapse comments when loading
     auto_collapse_on_load: bool,
     // Cache for cleaned HTML to improve performance with large comment threads
@@ -600,6 +603,8 @@ impl HackerNewsReaderApp {
             show_search_ui: false,
             show_todo_only: false,
             show_done_only: false,
+            status_message: String::new(),
+            last_status_update_time: 0.0,
             // Initialize auto-collapse flag
             auto_collapse_on_load: true,
             // Initialize HTML cleaning cache
@@ -1152,6 +1157,20 @@ impl HackerNewsReaderApp {
         self.filtered_stories.clear();
     }
     
+    // Update status message with current time
+    fn set_status_message(&mut self, message: String) {
+        self.status_message = message;
+        self.last_status_update_time = self.get_current_time();
+        self.needs_repaint = true;
+    }
+    
+    // Get current time in seconds
+    fn get_current_time(&self) -> f64 {
+        let now = std::time::SystemTime::now();
+        let since_epoch = now.duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
+        since_epoch.as_secs_f64()
+    }
+    
     fn toggle_todo_filter(&mut self) {
         self.show_todo_only = !self.show_todo_only;
         
@@ -1294,23 +1313,8 @@ impl eframe::App for HackerNewsReaderApp {
                 };
                 
             if let Some(story) = story_opt {
-                // Toggle the favorite
-                let is_favorite = self.is_favorite(&story_id);
-                
-                let result = if is_favorite {
-                    // Remove from favorites
-                    self.database.remove_favorite(&story_id)
-                } else {
-                    // Add to favorites
-                    self.database.add_favorite(&story)
-                };
-                
-                if let Err(e) = result {
-                    eprintln!("Error toggling favorite status: {}", e);
-                }
-                
-                // Update local list
-                self.reload_favorites();
+                // Call the toggle_favorite method
+                self.toggle_favorite(&story);
             }
             
             self.needs_repaint = true;
@@ -1334,7 +1338,7 @@ impl eframe::App for HackerNewsReaderApp {
                 self.add_to_todo(&story);
                 
                 // Show status message
-                self.status_message = format!("Added '{}' to your todo list", story.title);
+                self.set_status_message(format!("Added '{}' to your todo list", story.title));
                 
                 self.needs_repaint = true;
             }
@@ -1362,9 +1366,9 @@ impl eframe::App for HackerNewsReaderApp {
                 
                 // Show status message
                 if is_done {
-                    self.status_message = format!("Marked '{}' as not done", story.title);
+                    self.set_status_message(format!("Marked '{}' as not done", story.title));
                 } else {
-                    self.status_message = format!("Marked '{}' as done", story.title);
+                    self.set_status_message(format!("Marked '{}' as done", story.title));
                 }
                 
                 self.needs_repaint = true;
@@ -1382,6 +1386,39 @@ impl eframe::App for HackerNewsReaderApp {
         // Render side panel if it's visible
         if self.show_favorites_panel {
             self.render_side_panel(ctx);
+        }
+        
+        // Render status message if present
+        if !self.status_message.is_empty() {
+            // Create a small panel at the bottom for status messages
+            egui::TopBottomPanel::bottom("status_panel")
+                .frame(egui::Frame::none()
+                    .fill(self.theme.card_background)
+                    .stroke(Stroke::new(1.0, self.theme.separator))
+                    .inner_margin(8.0)
+                    .outer_margin(0.0))
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(&self.status_message)
+                                .color(self.theme.text)
+                                .size(14.0)
+                        );
+                        
+                        // Add a clear button on the right
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("×").clicked() {
+                                self.status_message.clear();
+                            }
+                        });
+                    });
+                });
+                
+            // Clear status message after 3 seconds
+            if ctx.input(|i| i.time - self.last_status_update_time > 3.0) {
+                self.status_message.clear();
+                self.needs_repaint = true;
+            }
         }
         
         // Set up main layout
@@ -2121,7 +2158,7 @@ impl eframe::App for HackerNewsReaderApp {
                     // Display keyboard navigation hint
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
-                            RichText::new("Keyboard: Arrows to scroll, Space for Page Down, Backspace to go back")
+                            RichText::new("Keyboard: Arrows to scroll, Space for Page Down, Backspace to go back, Ctrl+O to open article")
                                 .size(13.0)
                                 .color(self.theme.secondary_text)
                                 .italics()
@@ -2255,7 +2292,7 @@ impl eframe::App for HackerNewsReaderApp {
                     // Display keyboard navigation hint
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
-                            RichText::new("Keyboard: Arrows to scroll, Space for Page Down, Backspace to go back")
+                            RichText::new("Keyboard: Arrows to scroll, Space for Page Down, Backspace to go back, Ctrl+O to open article")
                                 .size(13.0)
                                 .color(self.theme.secondary_text)
                                 .italics()
@@ -2562,6 +2599,7 @@ impl HackerNewsReaderApp {
                 i.key_pressed(egui::Key::S),            // S key - For Ctrl+S side panel toggle
                 i.key_pressed(egui::Key::T),            // T key - Mark selected story as Todo
                 i.key_pressed(egui::Key::D),            // D key - Mark selected story as Done
+                i.key_pressed(egui::Key::O),            // O key - For Ctrl+O to open article in browser
             )
         });
         
@@ -2682,7 +2720,7 @@ impl HackerNewsReaderApp {
                         if idx < stories_to_display.len() {
                             let story = stories_to_display[idx].clone();
                             self.add_to_todo(&story);
-                            self.status_message = format!("Added '{}' to your todo list", story.title);
+                            self.set_status_message(format!("Added '{}' to your todo list", story.title));
                             self.needs_repaint = true;
                             return;
                         }
@@ -2698,9 +2736,9 @@ impl HackerNewsReaderApp {
                             self.toggle_done(&story);
                             
                             if was_done {
-                                self.status_message = format!("Marked '{}' as not done", story.title);
+                                self.set_status_message(format!("Marked '{}' as not done", story.title));
                             } else {
-                                self.status_message = format!("Marked '{}' as done", story.title);
+                                self.set_status_message(format!("Marked '{}' as done", story.title));
                             }
                             
                             self.needs_repaint = true;
@@ -2733,7 +2771,20 @@ impl HackerNewsReaderApp {
         }
         
         // Handle font size adjustment in comments view
-        if let Some(_) = &self.selected_story {
+        if let Some(ref selected_story) = self.selected_story {
+            // Ctrl+O to open article in browser
+            if input.14 && input.28 { // Ctrl + O
+                if !selected_story.url.is_empty() {
+                    self.open_link(&selected_story.url);
+                    self.set_status_message(format!("Opening article in browser: {}", selected_story.title));
+                } else {
+                    // If no URL is available (self-posts like Ask HN), show message
+                    self.set_status_message("No external URL available for this story".to_string());
+                }
+                self.needs_repaint = true;
+                return;
+            }
+            
             // Plus key to increase font size
             if input.21 {
                 self.increase_comment_font_size();
@@ -2962,7 +3013,7 @@ impl HackerNewsReaderApp {
         };
         
         // If filters are active but no results found, show a message
-        if ((!self.search_query.is_empty() || self.show_todo_only || self.show_done_only) && self.filtered_stories.is_empty()) {
+        if (!self.search_query.is_empty() || self.show_todo_only || self.show_done_only) && self.filtered_stories.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(20.0);
                 
@@ -4199,6 +4250,20 @@ impl HackerNewsReaderApp {
             self.database.add_favorite(story)
         };
         
+        if let Err(e) = result {
+            eprintln!("Error toggling favorite status: {}", e);
+            return;
+        }
+        
+        // Set appropriate status message
+        if is_favorite {
+            self.set_status_message(format!("Removed '{}' from favorites", story.title));
+        } else {
+            self.set_status_message(format!("Added '{}' to favorites", story.title));
+        }
+        
+        // Update our local favorites list
+        self.reload_favorites();
     }
     
     fn add_to_todo(&mut self, story: &HackerNewsItem) {
@@ -4237,13 +4302,6 @@ impl HackerNewsReaderApp {
         }
         
         // Reload favorites to reflect changes
-        self.reload_favorites();
-        if let Err(e) = result {
-            eprintln!("Error toggling favorite status: {}", e);
-            return;
-        }
-
-        // Update our local favorites list
         self.reload_favorites();
         self.needs_repaint = true;
     }
