@@ -266,15 +266,28 @@ impl HackerNewsClient {
     
     // Method to directly fetch latest comments first using the undocumented /latest endpoint
     pub fn fetch_latest_comments(&self, item_id: &str) -> Result<Vec<HackerNewsComment>> {
-        let url = format!("https://news.ycombinator.com/latest?id={}", item_id);
-        let response = self.client.get(&url)
-            .send()?;
+        let url = format!("https://news.ycombinator.com/item?id={}", item_id);
+        let latest_url = format!("https://news.ycombinator.com/latest?id={}", item_id);
         
+        // First try the /latest endpoint
+        let response = self.client.get(&latest_url).send()?;
         let html = response.text()?;
         let comments = Self::parse_comments(&html)?;
         
-        println!("Successfully loaded {} latest comments", comments.len());
-        Ok(comments)
+        // If we got comments successfully, return them
+        if !comments.is_empty() {
+            println!("Successfully loaded {} latest comments", comments.len());
+            return Ok(comments);
+        }
+        
+        // If no comments were found with the latest endpoint, fall back to the regular endpoint
+        println!("No comments found with /latest endpoint, falling back to standard endpoint");
+        let fallback_response = self.client.get(&url).send()?;
+        let fallback_html = fallback_response.text()?;
+        let fallback_comments = Self::parse_comments(&fallback_html)?;
+        
+        println!("Fallback loaded {} comments", fallback_comments.len());
+        Ok(fallback_comments)
     }
     
     fn parse_stories(html: &str) -> Result<Vec<HackerNewsItem>> {

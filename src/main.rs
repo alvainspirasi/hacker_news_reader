@@ -3709,7 +3709,7 @@ impl HackerNewsReaderApp {
             let sort_button_text = if self.show_latest_comments_first {
                 "⏱ Latest First"
             } else {
-                "⌛ Oldest First"
+                "⌛ Default"
             };
             
             let sort_button = ui.add(
@@ -3752,7 +3752,7 @@ impl HackerNewsReaderApp {
                     .order(egui::Order::Tooltip)
                     .fixed_pos(tooltip_pos)
                     .show(ui.ctx(), |ui| {
-                        ui.label("Toggle between chronological and latest-first comment order");
+                        ui.label("Toggle between default and latest-first comment order");
                     });
             }
             
