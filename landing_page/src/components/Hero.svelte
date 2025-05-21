@@ -11,7 +11,7 @@
       Stay up-to-date with tech news, discussions, and insights without any lag or slowdowns.
     </p>
     <div class="hero-buttons">
-      <a href="#download" class="btn">Download Now</a>
+      <a href="https://github.com/haojiang99/hacker_news_reader/releases/tag/Release" class="btn" target="_blank">Download Now</a>
       <a href="https://github.com/haojiang99/hacker_news_reader" class="btn btn-outline" target="_blank">View on GitHub</a>
     </div>
   </div>

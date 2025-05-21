@@ -8,15 +8,15 @@
     <p class="subtitle">Get the fastest Hacker News experience on your desktop</p>
     
     <div class="download-buttons">
-      <a href="#" class="btn">
+      <a href="https://github.com/haojiang99/hacker_news_reader/releases/tag/Release" class="btn" target="_blank">
         <i class="fab fa-windows"></i>
         Windows
       </a>
-      <a href="#" class="btn">
+      <a href="https://github.com/haojiang99/hacker_news_reader/releases/tag/Release" class="btn" target="_blank">
         <i class="fab fa-apple"></i>
         macOS
       </a>
-      <a href="#" class="btn">
+      <a href="https://github.com/haojiang99/hacker_news_reader/releases/tag/Release" class="btn" target="_blank">
         <i class="fab fa-linux"></i>
         Linux
       </a>
