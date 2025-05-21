@@ -10,7 +10,7 @@
         <a href="#features">Features</a>
         <a href="#screenshot">Screenshot</a>
         <a href="#download">Download</a>
-        <a href="https://github.com/username/hacker_news_reader" target="_blank">GitHub</a>
+        <a href="https://github.com/haojiang99/hacker_news_reader" target="_blank">GitHub</a>
       </div>
     </div>
   </div>

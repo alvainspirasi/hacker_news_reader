@@ -38,7 +38,7 @@ Built with Rust and the egui UI framework, with SQLite for local storage. The ap
 
 ## Try it out
 
-Check out the [GitHub repo](https://github.com/yourusername/hacker_news_reader) for installation instructions and source code. Built and tested on macOS, Linux, and Windows.
+Check out the [GitHub repo](https://github.com/haojiang99/hacker_news_reader) for installation instructions and source code. Built and tested on macOS, Linux, and Windows.
 
 I'd love your feedback, feature suggestions, or contributions!
 

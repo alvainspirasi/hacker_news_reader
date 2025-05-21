@@ -17,7 +17,7 @@
           <li><a href="#features">Features</a></li>
           <li><a href="#screenshot">Screenshot</a></li>
           <li><a href="#download">Download</a></li>
-          <li><a href="https://github.com/username/hacker_news_reader">GitHub</a></li>
+          <li><a href="https://github.com/haojiang99/hacker_news_reader">GitHub</a></li>
         </ul>
       </div>
       

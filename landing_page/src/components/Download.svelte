@@ -25,7 +25,7 @@
     <div class="download-info card">
       <h3>Open Source</h3>
       <p>This project is open source and available on GitHub. Feel free to contribute, report issues, or suggest improvements!</p>
-      <a href="https://github.com/username/hacker_news_reader" class="github-link" target="_blank">
+      <a href="https://github.com/haojiang99/hacker_news_reader" class="github-link" target="_blank">
         <i class="fab fa-github"></i>
         View on GitHub
       </a>

@@ -43,7 +43,7 @@ A native desktop application for browsing Hacker News with a clean, modern inter
 
 1. Clone the repository:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/haojiang99/hacker_news_reader.git
    cd hacker_news_reader
    ```
 

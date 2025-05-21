@@ -61,7 +61,7 @@
 
 ## 试用体验
 
-查看 [GitHub 仓库](https://github.com/yourusername/hacker_news_reader) 获取安装说明和源代码。已在 macOS、Linux 和 Windows 上构建和测试。
+查看 [GitHub 仓库](https://github.com/haojiang99/hacker_news_reader) 获取安装说明和源代码。已在 macOS、Linux 和 Windows 上构建和测试。
 
 欢迎提供反馈、功能建议或贡献！
 
