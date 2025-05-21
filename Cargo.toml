@@ -19,3 +19,5 @@ dirs-next = "2.0.0"
 image = "0.25.1" # Added for icon loading
 md5 = "0.7.0" # For HTML caching optimization
 lazy_static = "1.4.0" # For global font size
+urlencoding = "2.1.3" # For URL encoding in share links
+arboard = "3.3.0" # For clipboard operations

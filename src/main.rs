@@ -514,7 +514,10 @@ struct HackerNewsReaderApp {
     // Scroll offset for history panel
     history_scroll_offset: f32,
     // Search query for history
-    history_search_query: String
+    history_search_query: String,
+    // Share modal dialog state
+    show_share_modal: bool,
+    share_link_copied: bool
 }
 
 impl HackerNewsReaderApp {
@@ -635,7 +638,9 @@ impl HackerNewsReaderApp {
             history_stories: Vec::new(),
             history_loading: false,
             history_scroll_offset: 0.0,
-            history_search_query: String::new()
+            history_search_query: String::new(),
+            show_share_modal: false,
+            share_link_copied: false
         }
     }
     
@@ -2050,6 +2055,43 @@ impl eframe::App for HackerNewsReaderApp {
                                     self.pending_favorites_toggle = Some(story.id.clone());
                                 }
                                 
+                                // Add space between buttons
+                                ui.add_space(8.0);
+                                
+                                // Share button with improved icon
+                                let share_btn = ui.add_sized(
+                                    [40.0, 30.0],
+                                    egui::Button::new(
+                                        RichText::new("S")  // Simple "S" for Share - guaranteed to display in all fonts
+                                            .size(18.0)
+                                            .color(self.theme.button_foreground)
+                                    )
+                                    .corner_radius(CornerRadius::same(6))
+                                    .fill(self.theme.button_background)
+                                );
+                                
+                                // Add tooltip for the share button
+                                if share_btn.hovered() {
+                                    let tooltip_pos = share_btn.rect.left_top() + egui::vec2(0.0, -30.0);
+                                    
+                                    egui::Area::new("share_tooltip_area".into())
+                                        .order(egui::Order::Tooltip)
+                                        .fixed_pos(tooltip_pos)
+                                        .show(ui.ctx(), |ui| {
+                                            egui::Frame::popup(ui.style())
+                                                .fill(self.theme.card_background)
+                                                .stroke(Stroke::new(1.0, self.theme.separator))
+                                                .corner_radius(CornerRadius::same(6))
+                                                .show(ui, |ui| {
+                                                    ui.add(egui::Label::new("Share Article"));
+                                                });
+                                        });
+                                }
+                                
+                                if share_btn.clicked() {
+                                    // Open sharing modal dialog
+                                    self.show_share_modal = true;
+                                }
                             });
                         });
                     });
@@ -2069,7 +2111,7 @@ impl eframe::App for HackerNewsReaderApp {
                     // Display keyboard navigation hint
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
-                            RichText::new("Keyboard: Arrows to scroll, Space for Page Down, Backspace to go back, Ctrl+O to open article")
+                            RichText::new("Keyboard: Arrows to scroll, Space for Page Down, Backspace to go back, Ctrl+O to open article, Ctrl+L to copy link")
                                 .size(13.0)
                                 .color(self.theme.secondary_text)
                                 .italics()
@@ -2127,6 +2169,8 @@ impl eframe::App for HackerNewsReaderApp {
                                         ui.add_space(4.0);
                                         ui.add(egui::Label::new(RichText::new("General Controls:").strong()));
                                         ui.add(egui::Label::new("Ctrl+R - Refresh current view"));
+                                        ui.add(egui::Label::new("Ctrl+L - Copy article link to clipboard"));
+                                        ui.add(egui::Label::new("Ctrl+O - Open article in browser"));
                                         
                                         ui.add_space(4.0);
                                         ui.add(egui::Label::new(RichText::new("Navigation:").strong()));
@@ -2203,7 +2247,7 @@ impl eframe::App for HackerNewsReaderApp {
                     // Display keyboard navigation hint
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
-                            RichText::new("Keyboard: Arrows to scroll, Space for Page Down, Backspace to go back, Ctrl+O to open article")
+                            RichText::new("Keyboard: Arrows to scroll, Space for Page Down, Backspace to go back, Ctrl+O to open article, Ctrl+L to copy link")
                                 .size(13.0)
                                 .color(self.theme.secondary_text)
                                 .italics()
@@ -2380,6 +2424,136 @@ impl eframe::App for HackerNewsReaderApp {
                 }
             }
         });
+        
+        // Show the share modal dialog if it's enabled
+        if self.show_share_modal {
+            // Use a modal overlay
+            let mut modal_open = true;
+            
+            // Get screen dimensions for proper positioning
+            let screen_rect = ctx.screen_rect();
+            let modal_width = 300.0;
+            let modal_height = 250.0;
+            
+            // Center the modal dialog
+            let modal_pos = egui::pos2(
+                screen_rect.center().x - modal_width / 2.0,
+                screen_rect.center().y - modal_height / 2.0
+            );
+            
+            // Clone story details to avoid borrow checker issues
+            let story_title = self.selected_story.as_ref().map(|s| s.title.clone()).unwrap_or_default();
+            let story_id = self.selected_story.as_ref().map(|s| s.id.clone()).unwrap_or_default();
+            let button_foreground = self.theme.button_foreground;
+            let button_background = self.theme.button_background;
+            let is_link_copied = self.share_link_copied;
+            
+            // Create the modal window
+            egui::Window::new("Share")
+                .id(egui::Id::new("share_modal"))
+                .title_bar(true)
+                .resizable(false)
+                .collapsible(false)
+                .fixed_pos(modal_pos)
+                .fixed_size([modal_width, modal_height])
+                .open(&mut modal_open)
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(10.0);
+                        
+                        // X (formerly Twitter) share button
+                        if ui.add_sized([260.0, 40.0], egui::Button::new(
+                            RichText::new("Share on X")
+                                .size(16.0)
+                                .color(Color32::WHITE)
+                        ).fill(Color32::from_rgb(0, 0, 0))).clicked() {  // X uses black as brand color
+                            // Create X share URL (still uses twitter.com domain)
+                            let twitter_url = format!(
+                                "https://twitter.com/intent/tweet?text={}&url={}",
+                                urlencoding::encode(&story_title),
+                                urlencoding::encode(&format!("https://news.ycombinator.com/item?id={}", story_id))
+                            );
+                            // Use pointer cast to get mutable access
+                            let this = self as *const _ as *mut Self;
+                            unsafe {
+                                (*this).open_link(&twitter_url);
+                                (*this).show_share_modal = false;
+                            }
+                        }
+                        
+                        ui.add_space(10.0);
+                        
+                        // Facebook share button
+                        if ui.add_sized([260.0, 40.0], egui::Button::new(
+                            RichText::new("Share on Facebook")
+                                .size(16.0)
+                                .color(Color32::WHITE)
+                        ).fill(Color32::from_rgb(66, 103, 178))).clicked() {
+                            // Create Facebook share URL
+                            let facebook_url = format!(
+                                "https://www.facebook.com/sharer/sharer.php?u={}",
+                                urlencoding::encode(&format!("https://news.ycombinator.com/item?id={}", story_id))
+                            );
+                            // Use pointer cast to get mutable access
+                            let this = self as *const _ as *mut Self;
+                            unsafe {
+                                (*this).open_link(&facebook_url);
+                                (*this).show_share_modal = false;
+                            }
+                        }
+                        
+                        ui.add_space(10.0);
+                        
+                        // Copy link button
+                        let copy_btn_text = if is_link_copied {
+                            "Link Copied!"
+                        } else {
+                            "Copy Link to Clipboard"
+                        };
+                        
+                        if ui.add_sized([260.0, 40.0], egui::Button::new(
+                            RichText::new(copy_btn_text)
+                                .size(16.0)
+                                .color(button_foreground)
+                        ).fill(button_background)).clicked() {
+                            // Generate the HN link
+                            let hn_link = format!("https://news.ycombinator.com/item?id={}", story_id);
+                            
+                            // Copy to clipboard using clipboard crate
+                            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                                if clipboard.set_text(hn_link).is_ok() {
+                                    // Use pointer cast to get mutable access
+                                    let this = self as *const _ as *mut Self;
+                                    unsafe {
+                                        (*this).share_link_copied = true;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        ui.add_space(10.0);
+                        
+                        // Close button
+                        if ui.add_sized([260.0, 30.0], egui::Button::new(
+                            RichText::new("Close")
+                                .size(14.0)
+                        )).clicked() {
+                            // Use pointer cast to get mutable access
+                            let this = self as *const _ as *mut Self;
+                            unsafe {
+                                (*this).show_share_modal = false;
+                                (*this).share_link_copied = false;
+                            }
+                        }
+                    });
+                });
+            
+            // Close the modal if the open flag was changed
+            if !modal_open {
+                self.show_share_modal = false;
+                self.share_link_copied = false;
+            }
+        }
     }
 }
 
@@ -2511,6 +2685,7 @@ impl HackerNewsReaderApp {
                 i.key_pressed(egui::Key::T),            // T key - Mark selected story as Todo
                 i.key_pressed(egui::Key::D),            // D key - Mark selected story as Done
                 i.key_pressed(egui::Key::O),            // O key - For Ctrl+O to open article in browser
+                i.key_pressed(egui::Key::L),            // L key - For Ctrl+L to copy article link
             )
         });
         
@@ -2525,6 +2700,29 @@ impl HackerNewsReaderApp {
             self.toggle_favorites_panel();
             self.needs_repaint = true;
             return;
+        }
+        
+        // Handle Ctrl+L to copy article link (high priority) - this should work in comments view
+        if input.14 && input.29 {  // Ctrl + L
+            if let Some(ref story) = self.selected_story {
+                // Generate the HN link
+                let hn_link = format!("https://news.ycombinator.com/item?id={}", story.id);
+                
+                // Copy to clipboard
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    if clipboard.set_text(hn_link).is_ok() {
+                        // Show confirmation message
+                        self.set_status_message("Article link copied to clipboard".to_string());
+                        self.share_link_copied = true;
+                    } else {
+                        self.set_status_message("Failed to copy link to clipboard".to_string());
+                    }
+                } else {
+                    self.set_status_message("Clipboard access error".to_string());
+                }
+                self.needs_repaint = true;
+                return;
+            }
         }
         
         // Handle search UI keyboard shortcuts (high priority)
