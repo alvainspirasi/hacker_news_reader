@@ -20,12 +20,16 @@ A native desktop application for browsing Hacker News with a clean, modern inter
   - Jobs
   - Best Stories
 - View comments in a threaded, Reddit-like format with auto-folding and adjustable font size
+- Toggle between default and latest-first comment ordering
 - Search and filter stories by title, domain, or author
+- Share stories to social media or copy links with a single click
+- Track your reading history automatically
 - Automatically loads more content when scrolling to the bottom
 - Color-coded stories based on score
 - Dark and light mode support
 - Offline capability with local caching
 - Favorite stories for later reading
+- Mark stories as "todo" and "done" to track reading progress
 - Open articles in your default browser
 
 ## Installation
@@ -81,6 +85,7 @@ The compiled binary will be available at `target/release/hacker_news_reader`.
 - **- (Minus)**: Decrease comment font size when in comments view.
 - **Ctrl+S**: Toggle the side panel (favorites).
 - **Ctrl+F**: Show search interface to filter stories.
+- **Ctrl+L**: Copy the current article's link to clipboard.
 - **Ctrl+R**: Refresh current view and bypass cache.
 - **Escape**: Close search interface.
 - **1-6 Number Keys**: Switch between tabs (1=Hot, 2=New, 3=Show, 4=Ask, 5=Jobs, 6=Best).
@@ -106,10 +111,12 @@ The comments view shows a threaded display of comments. Features include:
 
 - Auto-folding of comments when first loaded for better overview
 - Collapsible comment threads
+- Toggle between default and latest-first comment ordering
 - Adjustable font size with + and - keys or buttons
 - Author highlighting
 - Nested replies
 - Comment age display
+- Share button to share article or copy link
 - HTML formatting preserved from original comments
 
 ### Favorites

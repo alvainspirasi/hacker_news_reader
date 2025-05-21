@@ -29,7 +29,17 @@
     {
       icon: 'fa-share-alt',
       title: 'Easy Sharing',
-      description: 'Share interesting articles with friends and colleagues with a single click.'
+      description: 'Share interesting articles with friends and colleagues with integrated sharing options.'
+    },
+    {
+      icon: 'fa-sort-amount-down',
+      title: 'Comment Sorting',
+      description: 'View comments in chronological order or see the latest comments first with a simple toggle.'
+    },
+    {
+      icon: 'fa-clock',
+      title: 'History Tracking',
+      description: 'Keep track of articles you\'ve read with automatic history tracking.'
     }
   ];
 </script>

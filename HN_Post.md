@@ -19,8 +19,11 @@ I couldn't find a tool that combined all these features, so I built one. It's be
 - **Search functionality**: Filter stories by keyword in title, domain, or author
 - **Multiple sections**: Browse all HN sections (hot, new, show, ask, jobs, best)
 - **Threaded comments**: View comments in a Reddit-like threaded format
+- **Comment sorting**: Toggle between default order and latest comments first
+- **Sharing options**: Easily share links to social media or copy to clipboard
+- **History tracking**: Automatically keeps track of articles you've viewed
 - **Dark/light mode**: Easy on the eyes in any environment
-- **Keyboard shortcuts**: Efficient navigation with keyboard-centric design (1-6 for tabs, Ctrl+F for search)
+- **Keyboard shortcuts**: Efficient navigation with keyboard-centric design (1-6 for tabs, Ctrl+F for search, Ctrl+L to copy link)
 - **Auto-loading**: Automatically loads more content when scrolling
 - **Color-coding**: Stories color-coded by score for easy scanning
 - **Native app**: Fast, responsive, and works offline with local caching
