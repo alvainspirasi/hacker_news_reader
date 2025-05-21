@@ -264,6 +264,19 @@ impl HackerNewsClient {
         Ok(comments)
     }
     
+    // Method to directly fetch latest comments first using the undocumented /latest endpoint
+    pub fn fetch_latest_comments(&self, item_id: &str) -> Result<Vec<HackerNewsComment>> {
+        let url = format!("https://news.ycombinator.com/latest?id={}", item_id);
+        let response = self.client.get(&url)
+            .send()?;
+        
+        let html = response.text()?;
+        let comments = Self::parse_comments(&html)?;
+        
+        println!("Successfully loaded {} latest comments", comments.len());
+        Ok(comments)
+    }
+    
     fn parse_stories(html: &str) -> Result<Vec<HackerNewsItem>> {
         // Extract the page number from the URL if present (to calculate correct indices)
         let _page_number = if html.contains("?p=") {

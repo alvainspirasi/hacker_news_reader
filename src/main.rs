@@ -501,6 +501,8 @@ struct HackerNewsReaderApp {
     auto_collapse_on_load: bool,
     // Cache for cleaned HTML to improve performance with large comment threads
     clean_html_cache: std::collections::HashMap<String, String>,
+    // Toggle to show latest comments first
+    show_latest_comments_first: bool,
     // We'll remove the comment_font_size field from the struct
     // and use the global GLOBAL_FONT_SIZE instead
     // Set of story IDs that the user has viewed
@@ -615,6 +617,8 @@ impl HackerNewsReaderApp {
             auto_collapse_on_load: true,
             // Initialize HTML cleaning cache
             clean_html_cache: std::collections::HashMap::new(),
+            // Initialize comments order toggle (default to false - chronological order)
+            show_latest_comments_first: false,
             // comment_font_size removed - using global value
             // Initialize viewed stories set
             viewed_story_ids: {
@@ -973,16 +977,34 @@ impl HackerNewsReaderApp {
         let item_id = item_id.to_string();
         let (tx, rx) = std::sync::mpsc::channel();
         
+        // Check if we should show latest comments first and use appropriate endpoint
+        let show_latest = self.show_latest_comments_first;
+        
         // Create a new thread for loading comments
         let handle = thread::spawn(move || {
-            let result: Box<dyn std::any::Any + Send> = match client.fetch_comments(&item_id) {
-                Ok(comments) => {
-                    let _ = tx.send(Some(comments));
-                    Box::new(())
+            let result: Box<dyn std::any::Any + Send> = if show_latest {
+                // Use the latest comments endpoint
+                match client.fetch_latest_comments(&item_id) {
+                    Ok(comments) => {
+                        let _ = tx.send(Some(comments));
+                        Box::new(())
+                    }
+                    Err(_) => {
+                        let _ = tx.send(None);
+                        Box::new(())
+                    }
                 }
-                Err(_) => {
-                    let _ = tx.send(None);
-                    Box::new(())
+            } else {
+                // Use the standard comments endpoint
+                match client.fetch_comments(&item_id) {
+                    Ok(comments) => {
+                        let _ = tx.send(Some(comments));
+                        Box::new(())
+                    }
+                    Err(_) => {
+                        let _ = tx.send(None);
+                        Box::new(())
+                    }
                 }
             };
             result
@@ -1023,16 +1045,34 @@ impl HackerNewsReaderApp {
             let item_id = story.id.clone();
             let (tx, rx) = std::sync::mpsc::channel();
             
+            // Check if we should show latest comments first and use appropriate endpoint
+            let show_latest = self.show_latest_comments_first;
+            
             // Create a new thread for loading comments with bypass cache
             let handle = thread::spawn(move || {
-                let result: Box<dyn std::any::Any + Send> = match client.fetch_fresh_comments(&item_id) {
-                    Ok(comments) => {
-                        let _ = tx.send(Some(comments));
-                        Box::new(())
+                let result: Box<dyn std::any::Any + Send> = if show_latest {
+                    // Use the latest comments endpoint
+                    match client.fetch_latest_comments(&item_id) {
+                        Ok(comments) => {
+                            let _ = tx.send(Some(comments));
+                            Box::new(())
+                        }
+                        Err(_) => {
+                            let _ = tx.send(None::<Vec<HackerNewsComment>>);
+                            Box::new(())
+                        }
                     }
-                    Err(_) => {
-                        let _ = tx.send(None::<Vec<HackerNewsComment>>);
-                        Box::new(())
+                } else {
+                    // Use standard fetch without cache
+                    match client.fetch_fresh_comments(&item_id) {
+                        Ok(comments) => {
+                            let _ = tx.send(Some(comments));
+                            Box::new(())
+                        }
+                        Err(_) => {
+                            let _ = tx.send(None::<Vec<HackerNewsComment>>);
+                            Box::new(())
+                        }
                     }
                 };
                 result
@@ -3664,6 +3704,59 @@ impl HackerNewsReaderApp {
             });
             
             ui.add_space(12.0); // Add spacing before pagination info
+            
+            // Add a toggle for showing latest comments first
+            let sort_button_text = if self.show_latest_comments_first {
+                "⏱ Latest First"
+            } else {
+                "⌛ Oldest First"
+            };
+            
+            let sort_button = ui.add(
+                egui::Button::new(
+                    RichText::new(sort_button_text)
+                        .color(self.theme.button_foreground)
+                        .size(14.0)
+                )
+                .min_size(egui::Vec2::new(110.0, 28.0))
+                .corner_radius(CornerRadius::same(4))
+                .fill(if self.show_latest_comments_first {
+                    self.theme.button_active_background
+                } else {
+                    self.theme.button_background
+                })
+            );
+            
+            if sort_button.clicked() {
+                self.show_latest_comments_first = !self.show_latest_comments_first;
+                
+                // Reload comments with new order if a story is selected
+                if let Some(story) = &self.selected_story {
+                    let story_id = story.id.clone();
+                    self.load_comments(&story_id);
+                }
+                
+                self.needs_repaint = true;
+            }
+            
+            if sort_button.hovered() {
+                ui.ctx().output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                
+                // Show tooltip
+                let tooltip_pos = egui::pos2(
+                    sort_button.rect.left() + sort_button.rect.width() / 2.0,
+                    sort_button.rect.bottom() + 4.0,
+                );
+                
+                egui::Area::new(egui::Id::new("sort_tooltip_area"))
+                    .order(egui::Order::Tooltip)
+                    .fixed_pos(tooltip_pos)
+                    .show(ui.ctx(), |ui| {
+                        ui.label("Toggle between chronological and latest-first comment order");
+                    });
+            }
+            
+            ui.add_space(8.0);
             
             ui.label(
                 RichText::new(format!("Showing page {} of {} ({} comments total)", 
