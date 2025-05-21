@@ -1396,7 +1396,7 @@ impl eframe::App for HackerNewsReaderApp {
         if !self.status_message.is_empty() {
             // Create a small panel at the bottom for status messages
             egui::TopBottomPanel::bottom("status_panel")
-                .frame(egui::Frame::none()
+                .frame(egui::Frame::new()
                     .fill(self.theme.card_background)
                     .stroke(Stroke::new(1.0, self.theme.separator))
                     .inner_margin(8.0)
@@ -2559,6 +2559,7 @@ impl HackerNewsReaderApp {
                 // Constants for story card height approximation
                 const APPROX_STORY_HEIGHT: f32 = 85.0; // Approximate height of a story card in pixels
                 const APPROX_STORY_MARGIN: f32 = 7.0;  // Approximate margin between stories
+                #[allow(dead_code)]
                 const VERTICAL_OFFSET_BUFFER: f32 = 100.0; // Additional buffer to ensure visibility
                 
                 // Helper function to calculate the scroll position to center the story in the viewport
@@ -2717,7 +2718,7 @@ impl HackerNewsReaderApp {
         }
         
         // Handle font size adjustment in comments view
-        if let Some(ref selected_story) = self.selected_story {
+        if let Some(_) = self.selected_story {
             
             // Plus key to increase font size
             if input.21 {
@@ -2839,6 +2840,7 @@ impl HackerNewsReaderApp {
             }
         } else {
             // Stories view shortcuts
+            #[allow(dead_code)]
             const SCROLL_AMOUNT: f32 = 30.0;
             const SCROLL_PAGE_AMOUNT: f32 = 500.0; // Larger value for more of a "page" feel
             
@@ -3834,6 +3836,7 @@ impl HackerNewsReaderApp {
     }
     
     // Estimate the height of a comment for virtual scrolling optimization
+    #[allow(dead_code)]
     fn estimate_comment_height(&self, comment: &HackerNewsComment, depth: usize) -> f32 {
         // Skip empty comments
         if comment.text.is_empty() || comment.text == "[deleted]" {

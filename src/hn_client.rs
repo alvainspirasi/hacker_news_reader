@@ -430,8 +430,16 @@ impl HackerNewsClient {
         // Extract all comments as flat list with their levels
         let mut comment_list = Vec::new();
         
+        // Set to keep track of comment IDs we've already processed to avoid duplicates
+        let mut processed_ids = std::collections::HashSet::new();
+        
         for comment_row in document.select(&comment_selector) {
             let id = comment_row.value().attr("id").unwrap_or_default().to_string();
+            
+            // Skip if we've already seen this comment ID
+            if !processed_ids.insert(id.clone()) {
+                continue;
+            }
             
             let level = comment_row
                 .select(&Selector::parse(".ind").map_err(|e| anyhow!("Selector error: {:?}", e))?)
@@ -476,20 +484,33 @@ impl HackerNewsClient {
             }));
         }
 
-        // Most direct approach - use the recursive function below to build the comment tree
-        
-        // Most direct approach - create simple recursive structure
+        // Create simple recursive structure with improved child finding that prevents duplicates
         fn build_comments_tree(comments: &[(i32, HackerNewsComment)]) -> Vec<HackerNewsComment> {
+            // Track which comment IDs we've seen across the entire tree
+            use std::collections::HashSet;
+            use std::cell::RefCell;
+            
+            // Use RefCell to allow mutation in the inner recursive function
+            let used_ids = RefCell::new(HashSet::new());
+            
             // Start with top-level comments
             let mut result = Vec::new();
             
             for (i, (level, comment)) in comments.iter().enumerate() {
                 if *level == 0 {
+                    // First check if we've already seen this comment ID
+                    if used_ids.borrow().contains(&comment.id) {
+                        continue;
+                    }
+                    
+                    // Mark this ID as used
+                    used_ids.borrow_mut().insert(comment.id.clone());
+                    
                     // Add top-level comment
                     let mut top_comment = comment.clone();
                     
                     // Find all direct children of this comment
-                    let children = find_children(comments, i);
+                    let children = find_children(comments, i, &used_ids);
                     top_comment.children = children;
                     
                     result.push(top_comment);
@@ -499,29 +520,36 @@ impl HackerNewsClient {
             return result;
             
             // Helper function to find all direct children of a comment
-            fn find_children(comments: &[(i32, HackerNewsComment)], parent_idx: usize) -> Vec<HackerNewsComment> {
-                let (parent_level, _) = comments[parent_idx];
+            fn find_children(comments: &[(i32, HackerNewsComment)], parent_idx: usize, 
+                            used_ids: &RefCell<HashSet<String>>) -> Vec<HackerNewsComment> {
+                let (parent_level, _parent) = &comments[parent_idx];
                 let child_level = parent_level + 1;
                 
                 let mut children = Vec::new();
-                let mut _last_direct_child_idx = 0;
                 
                 // Look for comments after the parent
                 for i in (parent_idx + 1)..comments.len() {
                     let (level, comment) = &comments[i];
                     
-                    if *level < parent_level {
+                    // Skip if we've already processed this comment ID
+                    if used_ids.borrow().contains(&comment.id) {
+                        continue;
+                    }
+                    
+                    if *level < *parent_level {
                         // This is a comment above our parent's level, so we're done
                         break;
                     } else if *level == child_level {
                         // This is a direct child
+                        // Mark this ID as used before we process it
+                        used_ids.borrow_mut().insert(comment.id.clone());
+                        
                         let mut child = comment.clone();
                         
                         // Recursively find this child's children
-                        child.children = find_children(comments, i);
+                        child.children = find_children(comments, i, used_ids);
                         
                         children.push(child);
-                        _last_direct_child_idx = i;
                     } else if *level > child_level {
                         // This is a deeper nested comment, skip it
                         // (it will be handled by recursive calls)
