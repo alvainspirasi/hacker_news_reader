@@ -6,6 +6,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 80,
-    open: true
+    open: true,
+    allowedHosts: ['fasthnreader.com', 'www.fasthnreader.com']
   }
 });
