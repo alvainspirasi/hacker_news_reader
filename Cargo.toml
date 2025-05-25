@@ -3,6 +3,16 @@ name = "hacker_news_reader"
 version = "0.1.0"
 edition = "2021"
 
+[package.metadata.bundle]
+name = "Hacker News Reader"
+identifier = "com.haojiang99.hackernewsreader"
+version = "1.0.0"
+icon = ["logo/logo.png"]
+copyright = "Copyright (c) 2024 Hao Jiang. All rights reserved."
+category = "Developer Tool"
+short_description = "A fast native Hacker News reader"
+long_description = "A native desktop application for browsing Hacker News with a clean, modern interface. Built with Rust and egui."
+
 [dependencies]
 eframe = "0.31.1"
 egui = "0.31.1"
