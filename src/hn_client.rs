@@ -290,6 +290,16 @@ impl HackerNewsClient {
         Ok(fallback_comments)
     }
     
+    // Method to fetch a single story by ID
+    pub fn fetch_story_by_id(&self, item_id: &str) -> Result<HackerNewsItem> {
+        let url = format!("https://news.ycombinator.com/item?id={}", item_id);
+        let response = self.client.get(&url).send()?;
+        let html = response.text()?;
+        
+        let story = Self::parse_single_story(&html, item_id)?;
+        Ok(story)
+    }
+    
     fn parse_stories(html: &str) -> Result<Vec<HackerNewsItem>> {
         // Extract the page number from the URL if present (to calculate correct indices)
         let _page_number = if html.contains("?p=") {
@@ -447,6 +457,109 @@ impl HackerNewsClient {
         }
         
         Ok(stories)
+    }
+    
+    fn parse_single_story(html: &str, item_id: &str) -> Result<HackerNewsItem> {
+        let document = Html::parse_document(html);
+        
+        // Parse the story from the item page (different structure than the main list)
+        let title_selector = Selector::parse(".titleline > a").map_err(|e| anyhow!("Title selector error: {:?}", e))?;
+        let title = document.select(&title_selector).next()
+            .map(|e| e.inner_html())
+            .unwrap_or_default();
+            
+        let url = document.select(&title_selector).next()
+            .and_then(|e| e.value().attr("href"))
+            .unwrap_or_default()
+            .to_string();
+            
+        // Domain
+        let domain_selector = Selector::parse(".sitestr").map_err(|e| anyhow!("Selector error: {:?}", e))?;
+        let domain = document.select(&domain_selector).next()
+            .map(|e| e.inner_html())
+            .unwrap_or_default();
+            
+        // Subtext information
+        let subtext_selector = Selector::parse(".subtext").map_err(|e| anyhow!("Selector error: {:?}", e))?;
+        let subtext = document.select(&subtext_selector).next();
+        
+        let by = subtext
+            .and_then(|e| {
+                let by_selector = Selector::parse(".hnuser").ok()?;
+                e.select(&by_selector).next().map(|e| e.inner_html())
+            })
+            .unwrap_or_default();
+            
+        let score = subtext
+            .and_then(|e| {
+                let score_selector = Selector::parse(".score").ok()?;
+                let score_text = e.select(&score_selector).next()?.inner_html();
+                score_text.split_whitespace().next()?.parse::<i32>().ok()
+            })
+            .unwrap_or(0);
+            
+        let time_ago = subtext
+            .and_then(|e| {
+                let age_selector = Selector::parse(".age").ok()?;
+                let age_element = e.select(&age_selector).next()?;
+                
+                if let Ok(a_selector) = Selector::parse("a") {
+                    if let Some(link) = age_element.select(&a_selector).next() {                        
+                        let time_text = link.inner_html();
+                        return Some(html_escape::decode_html_entities(&time_text).to_string());
+                    }
+                }
+                
+                Some(age_element.inner_html())
+            })
+            .unwrap_or_default();
+            
+        // Comment count parsing for single item page
+        let comments_count = subtext
+            .and_then(|e| {
+                let link_selector = Selector::parse("a").ok()?;
+                for link in e.select(&link_selector) {
+                    let link_text = link.inner_html();
+                    
+                    if link_text.contains("comment") || link_text.contains("discuss") {
+                        if link_text.contains("discuss") {
+                            return Some(0);
+                        }
+                        
+                        let re = regex::Regex::new(r"(\d+)(?:&nbsp;|\s+)comments").unwrap();
+                        if let Some(caps) = re.captures(&link_text) {
+                            if let Some(count_match) = caps.get(1) {
+                                if let Ok(count) = count_match.as_str().parse::<i32>() {
+                                    return Some(count);
+                                }
+                            }
+                        }
+                        
+                        let parts: Vec<&str> = link_text.split_whitespace().collect();
+                        if parts.len() >= 1 {
+                            if let Ok(count) = parts[0].parse::<i32>() {
+                                return Some(count);
+                            }
+                        }
+                        
+                        return Some(0);
+                    }
+                }
+                Some(0)
+            })
+            .unwrap_or(0);
+        
+        Ok(HackerNewsItem {
+            id: item_id.to_string(),
+            title,
+            url,
+            domain,
+            by,
+            score,
+            time_ago,
+            comments_count,
+            original_index: 0, // Not applicable for individual items
+        })
     }
     
     fn parse_comments(html: &str) -> Result<Vec<HackerNewsComment>> {

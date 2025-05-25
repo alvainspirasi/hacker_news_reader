@@ -468,6 +468,7 @@ struct HackerNewsReaderApp {
     collapsed_comments: std::collections::HashSet<String>,
     stories_receiver: Option<std::sync::mpsc::Receiver<Option<Vec<HackerNewsItem>>>>,
     comments_receiver: Option<std::sync::mpsc::Receiver<Option<Vec<HackerNewsComment>>>>,
+    story_fetch_receiver: Option<std::sync::mpsc::Receiver<Option<HackerNewsItem>>>,
     // Pagination for comments
     comments_page: usize,
     comments_per_page: usize,
@@ -588,6 +589,7 @@ impl HackerNewsReaderApp {
             collapsed_comments: std::collections::HashSet::new(),
             stories_receiver: None,
             comments_receiver: None,
+            story_fetch_receiver: None,
             // Initialize pagination with reasonable defaults
             comments_page: 0,
             comments_per_page: 20, // Display 20 top-level comments per page
@@ -922,6 +924,27 @@ impl HackerNewsReaderApp {
                     self.comments = Vec::new();
                     self.loading = false;
                     self.comments_receiver = None; // Consume the receiver
+                    self.needs_repaint = true;
+                }
+                Err(_) => {
+                    // Still waiting for results
+                }
+            }
+        }
+        
+        // Check for fetched individual story from the receiver
+        if let Some(rx) = &self.story_fetch_receiver {
+            match rx.try_recv() {
+                Ok(Some(story)) => {
+                    // Story fetched successfully, view its comments
+                    self.view_comments(story, false);
+                    self.story_fetch_receiver = None; // Consume the receiver
+                    self.needs_repaint = true;
+                }
+                Ok(None) => {
+                    // Failed to fetch story
+                    eprintln!("Failed to fetch story from history");
+                    self.story_fetch_receiver = None; // Consume the receiver
                     self.needs_repaint = true;
                 }
                 Err(_) => {
@@ -4477,6 +4500,26 @@ impl HackerNewsReaderApp {
         }
     }
 
+    fn fetch_and_view_story_by_id(&mut self, story_id: String) {
+        let client = self.hn_client.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        
+        std::thread::spawn(move || {
+            match client.fetch_story_by_id(&story_id) {
+                Ok(story) => {
+                    let _ = tx.send(Some(story));
+                }
+                Err(e) => {
+                    eprintln!("Error fetching story {}: {}", story_id, e);
+                    let _ = tx.send(None::<HackerNewsItem>);
+                }
+            }
+        });
+        
+        // Store the receiver to check for results in update loop
+        self.story_fetch_receiver = Some(rx);
+    }
+
     fn is_favorite(&self, id: &str) -> bool {
         match self.database.is_favorite(id) {
             Ok(is_fav) => is_fav,
@@ -5036,14 +5079,20 @@ impl HackerNewsReaderApp {
                     
                     // Handle click on history item
                     if title_label.clicked() {
-                        // If we have this story in our current stories list, view it
-                        // Otherwise we would need to fetch it again from the API
+                        // First check if we have this story in our current stories list
+                        let mut found_in_current_stories = false;
                         for current_story in &self.stories {
                             if current_story.id == story.id {
                                 let story_clone = current_story.clone();
                                 self.view_comments(story_clone, false);
+                                found_in_current_stories = true;
                                 break;
                             }
+                        }
+                        
+                        // If not found in current stories, fetch it from the API
+                        if !found_in_current_stories {
+                            self.fetch_and_view_story_by_id(story.id.clone());
                         }
                     }
                     
